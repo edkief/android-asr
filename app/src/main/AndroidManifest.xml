@@ -7,6 +7,14 @@
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.ConvoScribe"
         android:largeHeap="true">
+        <!--
+            libcdsprpc.so is the userspace half of the Hexagon DSP RPC
+            driver. The QNN HTP backend loads the *.so Skel/Stub pair via
+            this library, so on a device without it we cannot create the
+            NPU backend. Marking it required="false" lets the APK still
+            install on devices/emulators that lack the DSP; QNN device
+            creation will fail with error 14001 at runtime if so.
+        -->
         <uses-native-library
             android:name="libcdsprpc.so"
             android:required="false" />
