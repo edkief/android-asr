@@ -11,15 +11,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
@@ -38,11 +46,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -56,6 +66,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -65,6 +76,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import com.convoscribe.ConvoApp
 import com.convoscribe.R
+import com.convoscribe.data.ChatMessageEntity
+import com.convoscribe.data.MessageRole
 import com.convoscribe.data.SessionStatus
 import com.convoscribe.data.SpeakerEntity
 import com.convoscribe.data.TranscriptLine
@@ -136,8 +149,21 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
             }
         }
     )
+    val askVm: AskViewModel = viewModel(
+        factory = viewModelFactory {
+            initializer {
+                AskViewModel(
+                    sessionId = sessionId,
+                    repository = container.sessionRepository,
+                    chatClient = container.chatClient,
+                    settings = container.settingsRepository
+                )
+            }
+        }
+    )
     val state by vm.uiState.collectAsStateWithLifecycle()
     val summaryState by summaryVm.state.collectAsStateWithLifecycle()
+    val askState by askVm.state.collectAsStateWithLifecycle()
 
     SessionBody(
         title = state.title,
@@ -146,6 +172,7 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
         speakers = state.speakers,
         notFound = state.notFound,
         summaryState = summaryState,
+        askState = askState,
         onBack = { navController.popBackStack() },
         onShare = {
             // Build the share intent on the main thread; the
@@ -181,6 +208,10 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
         },
         onSummarise = { summaryVm.summarise() },
         onCancelSummary = { summaryVm.cancel() },
+        onAsk = { question -> askVm.ask(question) },
+        onRetryAsk = { askVm.retryLast() },
+        onCancelAsk = { askVm.cancel() },
+        onClearQuestions = { askVm.clearHistory() },
         onOpenSettings = { navController.navigate("settings") }
     )
 }
@@ -200,6 +231,7 @@ internal fun SessionBody(
     speakers: List<SpeakerEntity>,
     notFound: Boolean,
     summaryState: SummaryUiState,
+    askState: AskUiState,
     onBack: () -> Unit,
     onShare: () -> Unit,
     onRenameSpeaker: (Int, String) -> Unit,
@@ -207,6 +239,10 @@ internal fun SessionBody(
     onDiarizeAgain: () -> Unit,
     onSummarise: () -> Unit,
     onCancelSummary: () -> Unit,
+    onAsk: (String) -> Unit,
+    onRetryAsk: () -> Unit,
+    onCancelAsk: () -> Unit,
+    onClearQuestions: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -217,6 +253,7 @@ internal fun SessionBody(
     // index is the speaker we're renaming.
     var renameSpeakerIndex by remember { mutableStateOf<Int?>(null) }
     var renameSessionOpen by remember { mutableStateOf(false) }
+    var clearQuestionsOpen by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -262,6 +299,14 @@ internal fun SessionBody(
                                 onDiarizeAgain()
                             }
                         )
+                        DropdownMenuItem(
+                            text = { Text(text = stringResource(R.string.session_overflow_clear_questions)) },
+                            enabled = askState.messages.isNotEmpty(),
+                            onClick = {
+                                overflowExpanded = false
+                                clearQuestionsOpen = true
+                            }
+                        )
                     }
                 }
             )
@@ -303,7 +348,13 @@ internal fun SessionBody(
                     onCancel = onCancelSummary,
                     onOpenSettings = onOpenSettings
                 )
-                else -> ComingSoonTab()
+                else -> AskTab(
+                    state = askState,
+                    onAsk = onAsk,
+                    onRetry = onRetryAsk,
+                    onCancel = onCancelAsk,
+                    onOpenSettings = onOpenSettings
+                )
             }
         }
     }
@@ -333,6 +384,29 @@ internal fun SessionBody(
                 renameSessionOpen = false
             },
             onDismiss = { renameSessionOpen = false }
+        )
+    }
+    // Clear-questions confirmation. The action itself is gated on
+    // `messages.isNotEmpty()` already, so the dialog only opens
+    // when there is something to clear.
+    if (clearQuestionsOpen) {
+        AlertDialog(
+            onDismissRequest = { clearQuestionsOpen = false },
+            title = { Text(text = stringResource(R.string.session_ask_clear_title)) },
+            text = { Text(text = stringResource(R.string.session_ask_clear_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onClearQuestions()
+                    clearQuestionsOpen = false
+                }) {
+                    Text(text = stringResource(R.string.session_ask_clear_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearQuestionsOpen = false }) {
+                    Text(text = stringResource(R.string.session_ask_clear_cancel))
+                }
+            }
         )
     }
 }
@@ -702,5 +776,241 @@ private fun SessionNotFound() {
             text = stringResource(R.string.session_not_found),
             style = MaterialTheme.typography.bodyLarge
         )
+    }
+}
+
+/**
+ * Ask tab body. Three layouts:
+ *
+ *  - the LLM endpoint is not configured: a single line of text
+ *    and a button that navigates to the Settings screen;
+ *  - configured and idle: a column of chat bubbles (USER on the
+ *    right with `primaryContainer`, ASSISTANT on the left with
+ *    `surfaceVariant`, text selectable), with the in-flight
+ *    streaming answer as a "live" ASSISTANT bubble when one is
+ *    in flight, an inline error block with a Retry button when
+ *    the previous call failed, and a bottom input row with an
+ *    `OutlinedTextField` and a send `IconButton`.
+ *
+ * Auto-scroll: every time the rendered message list grows
+ * (new user/assistant bubble appended or streaming bubble
+ * expands) the list is scrolled to the bottom so the user does
+ * not have to chase the conversation. While streaming the list
+ * keeps following the tail as each new token arrives.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AskTab(
+    state: AskUiState,
+    onAsk: (String) -> Unit,
+    onRetry: () -> Unit,
+    onCancel: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    var draft by rememberSaveable(state.running, state.messages.size) {
+        // Reset the draft when a fresh round starts (either a
+        // new USER bubble was added or `running` just turned
+        // true). The key list keeps the input clear while the
+        // streaming bubble expands and shrinks.
+        mutableStateOf("")
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (!state.configured) {
+            Text(
+                text = stringResource(R.string.session_ask_not_configured),
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Button(onClick = onOpenSettings) {
+                Text(text = stringResource(R.string.session_ask_open_settings))
+            }
+            return
+        }
+
+        // Lazily-built scroll state: the `LazyListState` is
+        // remembered across recompositions so the scroll
+        // position survives the streaming bubble updates.
+        val listState = rememberLazyListState()
+        val hasContent = state.messages.isNotEmpty() || state.streaming.isNotEmpty()
+        if (hasContent) {
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                state = listState,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(
+                    items = state.messages,
+                    key = { it.id }
+                ) { message ->
+                    ChatBubble(message = message)
+                }
+                if (state.streaming.isNotEmpty()) {
+                    item(key = "streaming") {
+                        ChatBubble(
+                            message = ChatMessageEntity(
+                                id = -1L,
+                                sessionId = 0L,
+                                kind = com.convoscribe.data.MessageKind.QA,
+                                role = MessageRole.ASSISTANT,
+                                content = state.streaming,
+                                createdAt = 0L
+                            )
+                        )
+                    }
+                }
+                // The trailing spacer keeps the last bubble clear
+                // of the keyboard when the IME is open.
+                item(key = "tail") { Spacer(modifier = Modifier.height(4.dp)) }
+            }
+            LaunchedEffect(state.messages.size, state.streaming) {
+                // Auto-scroll to the tail whenever the
+                // conversation grows (new bubble appended) or the
+                // streaming bubble expands by at least a few
+                // tokens. Guarded by the LazyColumn's recompose so
+                // we only fire when the inputs actually changed.
+                if (state.messages.isNotEmpty() || state.streaming.isNotEmpty()) {
+                    listState.scrollToItem(
+                        index = (state.messages.size + if (state.streaming.isNotEmpty()) 1 else 0).coerceAtLeast(0)
+                    )
+                }
+            }
+        } else {
+            // Empty placeholder when there is nothing to show yet.
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(R.string.session_ask_empty),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        }
+
+        // Inline error + Retry, shown above the input row.
+        state.error?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+            TextButton(onClick = onRetry) {
+                Text(text = stringResource(R.string.session_ask_retry))
+            }
+        }
+
+        // Bottom input row: text field + send button.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                modifier = Modifier.weight(1f),
+                singleLine = false,
+                maxLines = 4,
+                enabled = !state.running,
+                placeholder = { Text(text = stringResource(R.string.session_ask_input_label)) },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(
+                    onSend = {
+                        val text = draft.trim()
+                        if (text.isNotEmpty() && !state.running) {
+                            onAsk(text)
+                            draft = ""
+                        }
+                    }
+                )
+            )
+            if (state.running) {
+                IconButton(onClick = onCancel) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = stringResource(R.string.session_summary_stop)
+                    )
+                }
+            } else {
+                val canSend = draft.trim().isNotEmpty()
+                IconButton(
+                    enabled = canSend,
+                    onClick = {
+                        val text = draft.trim()
+                        if (text.isNotEmpty()) {
+                            onAsk(text)
+                            draft = ""
+                        }
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = stringResource(R.string.session_ask_send_cd)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Render a single chat bubble from a [ChatMessageEntity]. USER
+ * bubbles are right-aligned with `primaryContainer`; ASSISTANT
+ * bubbles are left-aligned with `surfaceVariant`. Text is wrapped
+ * in [SelectionContainer] so the user can long-press to copy.
+ *
+ * The bubble width is capped at ~80 % of the row so a long
+ * answer does not run edge-to-edge on a tablet.
+ */
+@Composable
+private fun ChatBubble(message: ChatMessageEntity) {
+    val isUser = message.role == MessageRole.USER
+    val bubbleColor = if (isUser) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    val onBubble = if (isUser) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+    ) {
+        Surface(
+            color = bubbleColor,
+            contentColor = onBubble,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .widthIn(max = 320.dp)
+                .padding(0.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                SelectionContainer {
+                    Text(
+                        text = message.content,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = onBubble
+                    )
+                }
+            }
+        }
     }
 }

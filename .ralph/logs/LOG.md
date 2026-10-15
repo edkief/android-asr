@@ -1,3 +1,55 @@
+## 2026-10-15 — TASK-27: Ask tab: question/answer chat about the transcript
+
+Added `ui/session/AskViewModel.kt` and the matching unit test
+`ui/session/AskViewModelTest.kt`. The ViewModel exposes a single
+`AskUiState(messages, streaming, running, error, configured)` and
+mirrors the persisted QA history through
+`SessionRepository.observeMessages(sessionId, QA)`. `ask(question)`
+trims blank input, ignores re-entry while running, persists the
+USER row first (so a crash mid-stream keeps the question visible),
+and streams the response through `chatClient.stream(
+PromptBuilder.question(transcript, maxChars, history, question))`
+where `history` is the persisted USER/ASSISTANT rows mapped to
+`LlmMessage`. On completion the streamed text is appended as an
+ASSISTANT QA row. `retryLast()` resends the last USER message
+without saving a second USER row, and `clearHistory()` deletes
+every QA row for the session. `LlmException` is surfaced verbatim
+through `error`; the USER row stays in the DB so retry can
+re-send the question.
+
+The Ask tab replaces the previous "Coming soon" placeholder with
+`AskTab` in `ui/session/SessionScreen.kt`: same not-configured
+state as Summary, then a `LazyColumn` of chat bubbles (USER right-
+aligned with `primaryContainer`, ASSISTANT left-aligned with
+`surfaceVariant`, text selectable via `SelectionContainer`), the
+in-flight streamed answer as a live bubble, an inline error with
+a "Retry" button, and a bottom row with an `OutlinedTextField`
+("Ask about this conversation…", `ImeAction.Send`) and a send
+`IconButton` that swaps to a Stop icon while a request is
+running. Auto-scroll runs through `LaunchedEffect(messages.size,
+streaming)` so the list follows the tail when bubbles are added
+and when the streaming bubble expands. The overflow menu now has
+"Clear questions" (gated on `messages.isNotEmpty()`) which opens
+a confirmation dialog before invoking `clearHistory()`.
+
+5 new tests in `AskViewModelTest` (Robolectric + in-memory Room
+with synchronous executors + fake `ChatClient` +
+`Dispatchers.setMain`): streaming `"Bob"` ends with a USER row
+followed by an ASSISTANT row in order, both in `state.messages`
+and in the DB; the second question's prompt contains the first Q
+and A as history (compared against `PromptBuilder.question`
+exactly); `LlmException("HTTP 500: x")` sets `error` and keeps
+the persisted USER row, then `retryLast()` succeeds and produces
+exactly one USER + one ASSISTANT row (no duplicate USER); blank
+and whitespace-only questions do nothing — no `stream()` call, no
+DB row; `clearHistory()` empties both `state.messages` and the
+DB. 12 new strings (`session_ask_*`).
+
+Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (247 tests including 5 new, ktlint clean, lintDebug clean,
+assembleDebug succeeds).
+
 ## 2026-10-15 — TASK-26: Summary tab: stream, save and regenerate the summary
 
 Added `ui/session/SummaryViewModel.kt` and the matching unit test
