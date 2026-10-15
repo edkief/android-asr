@@ -44,4 +44,14 @@ interface SessionDao {
 
     @Query("UPDATE sessions SET status = :status WHERE id = :id")
     suspend fun setStatus(id: Long, status: SessionStatus)
+
+    /**
+     * Stamp the final duration on a session. Used by the
+     * crash-recovery loop (TASK-19) to back-fill the duration of a
+     * WAV that was left half-closed when the process was killed;
+     * the recorder itself sets the duration together with the
+     * status in [SessionRepository.finishRecording].
+     */
+    @Query("UPDATE sessions SET durationMs = :durationMs WHERE id = :id")
+    suspend fun updateDuration(id: Long, durationMs: Long)
 }

@@ -16,6 +16,7 @@ import androidx.core.content.getSystemService
 import com.convoscribe.ConvoApp
 import com.convoscribe.MainActivity
 import com.convoscribe.R
+import com.convoscribe.diarization.DiarizeSessionUseCase
 import com.convoscribe.recording.RecordingController
 import com.convoscribe.recording.RecordingPhase
 import kotlinx.coroutines.CoroutineScope
@@ -93,6 +94,16 @@ class RecordingService : Service() {
         when (intent?.action) {
             ACTION_START -> handleStart()
             ACTION_STOP -> handleStop()
+            ACTION_DIARIZE -> {
+                val id = intent.getLongExtra(EXTRA_SESSION_ID, -1L)
+                if (id <= 0L) {
+                    // Defensive: a malformed intent must not crash
+                    // the service. Bail out cleanly.
+                    if (controller().state.value.phase == RecordingPhase.IDLE) stopSelf()
+                } else {
+                    handleDiarize(id)
+                }
+            }
             // Defensive: an intent with an unknown action is a
             // client bug. Don't crash; just stay in foreground if
             // we already are, otherwise exit cleanly.
@@ -141,11 +152,55 @@ class RecordingService : Service() {
         // stop() is suspend; hop onto the service scope so we do
         // not block onStartCommand on the audio+ASR teardown.
         scope.launch {
-            controller.stop()
+            val completedId = controller.stop()
+            // Mic capture has ended; the service stays in the
+            // foreground but switches to a `dataSync` type while
+            // diarization runs. The microphone is no longer in use,
+            // so the microphone-typed foreground would not be
+            // allowed past Android 14 anyway. The notification
+            // text changes to "Identifying speakers…" so the user
+            // sees the service is still working.
+            ensureNotificationChannel()
+            ServiceCompat.startForeground(
+                this@RecordingService,
+                NOTIFICATION_ID,
+                buildDiarizingNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+            if (completedId != null) {
+                diarizerUseCase().run(completedId)
+            }
+            // Diarization is done (or there was nothing to
+            // diarize). Release the wake lock first so we don't
+            // keep the CPU pinned after the service has gone, then
+            // tear down the foreground state in one go so we don't
+            // briefly leave a stale "Identifying…" notification
+            // behind.
             releaseWakeLock()
-            // `STOP_FOREGROUND_REMOVE` removes the notification in
-            // the same call so we don't briefly see a stale
-            // "Recording" notification after the session ends.
+            ServiceCompat.stopForeground(this@RecordingService, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
+    /**
+     * Run the diarization use case for [sessionId] in the
+     * background. This is the manual "retry" entry point the
+     * session-detail screen uses after a `DIARIZATION_FAILED` row.
+     * The service promotes itself to a `dataSync`-typed
+     * foreground (the microphone is not used here) with the
+     * "Identifying speakers…" notification, runs the use case,
+     * and stops.
+     */
+    private fun handleDiarize(sessionId: Long) {
+        ensureNotificationChannel()
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            buildDiarizingNotification(),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        )
+        scope.launch {
+            diarizerUseCase().run(sessionId)
             ServiceCompat.stopForeground(this@RecordingService, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -285,6 +340,43 @@ class RecordingService : Service() {
         return (application as ConvoApp).container.recordingController
     }
 
+    /**
+     * Resolve the diarization use case off the [ConvoApp]
+     * container. Used by both the post-stop auto-diarization and
+     * the manual [ACTION_DIARIZE] path.
+     */
+    private fun diarizerUseCase(): DiarizeSessionUseCase {
+        return (application as ConvoApp).container.diarizeSessionUseCase
+    }
+
+    /**
+     * Build the "Identifying speakers…" notification used while
+     * the diarization use case is in flight. Re-uses the
+     * recording channel and the same small icon, so the user only
+     * ever sees one notification id; the text is the only thing
+     * that changes.
+     */
+    private fun buildDiarizingNotification(): android.app.Notification {
+        val contentIntent = PendingIntent.getActivity(
+            this,
+            REQUEST_OPEN,
+            Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(getString(R.string.notification_diarizing_title))
+            .setContentText(getString(R.string.notification_diarizing_text))
+            .setContentIntent(contentIntent)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .build()
+    }
+
     companion object {
         /** Notification id used for the foreground notification. */
         private const val NOTIFICATION_ID = 1
@@ -311,6 +403,19 @@ class RecordingService : Service() {
         const val ACTION_STOP = "com.convoscribe.STOP"
 
         /**
+         * Action sent to [RecordingService] to re-run diarization
+         * for a session that ended in `DIARIZATION_FAILED`. The
+         * session id is passed in [EXTRA_SESSION_ID]. The caller
+         * is responsible for `startForegroundService` (Android 8+)
+         * and the `POST_NOTIFICATIONS` runtime permission
+         * (Android 13+).
+         */
+        const val ACTION_DIARIZE = "com.convoscribe.DIARIZE"
+
+        /** Long extra key for [ACTION_DIARIZE]; the session id. */
+        const val EXTRA_SESSION_ID = "com.convoscribe.EXTRA_SESSION_ID"
+
+        /**
          * Build an [Intent] that, when sent to [RecordingService],
          * starts the recording session. The caller is responsible
          * for `startForegroundService` (Android 8+) and the
@@ -325,5 +430,17 @@ class RecordingService : Service() {
          * no-op if the service is not running.
          */
         fun stopIntent(context: Context): Intent = Intent(context, RecordingService::class.java).setAction(ACTION_STOP)
+
+        /**
+         * Build an [Intent] that, when sent to [RecordingService],
+         * re-runs diarization for [sessionId]. The service
+         * promotes to a `dataSync`-typed foreground while it works,
+         * then stops itself when done.
+         */
+        fun diarizeIntent(context: Context, sessionId: Long): Intent {
+            return Intent(context, RecordingService::class.java)
+                .setAction(ACTION_DIARIZE)
+                .putExtra(EXTRA_SESSION_ID, sessionId)
+        }
     }
 }

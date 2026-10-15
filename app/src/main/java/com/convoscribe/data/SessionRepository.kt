@@ -153,6 +153,42 @@ class SessionRepository(
         speakerDao.rename(sessionId, speakerIndex, label)
 
     /**
+     * Flip [id]'s status to [status]. Used by the diarization use
+     * case (`DIARIZING` on entry, `DIARIZED` via
+     * [applyDiarization], `DIARIZATION_FAILED` on error) and by
+     * the crash-recovery loop (`RECORDING`/`DIARIZING` →
+     * `TRANSCRIBED`). Unknown ids are a no-op because the DAO's
+     * `UPDATE` statement does nothing on a missing row.
+     */
+    suspend fun setStatus(id: Long, status: SessionStatus) {
+        sessionDao.setStatus(id, status)
+    }
+
+    /**
+     * Stamp [durationMs] on [id]. Used by the crash-recovery loop
+     * to compute the duration of a WAV that was left in a
+     * half-closed state when the process was killed; the recorder
+     * itself calls [finishRecording], which both sets the duration
+     * and flips the status. Unknown ids are a no-op.
+     */
+    suspend fun setDuration(id: Long, durationMs: Long) {
+        sessionDao.updateDuration(id, durationMs)
+    }
+
+    /**
+     * Every session currently in [status]. Used by the
+     * crash-recovery loop (TASK-19) to find sessions left in
+     * `RECORDING` (process killed mid-capture) or `DIARIZING`
+     * (process killed mid-diarization). The result is a snapshot
+     * taken at call time — the loop iterates it without holding
+     * any database cursor, so the writes it issues do not race
+     * with a future caller re-fetching the same rows.
+     */
+    suspend fun sessionsWithStatus(status: SessionStatus): List<SessionEntity> {
+        return sessionDao.findByStatus(status)
+    }
+
+    /**
      * Persist a diarization result. [assignments] maps a segment id
      * to its speaker index (or `null` for unlabelled). [speakerCount]
      * is the number of distinct speakers the diarizer detected, used

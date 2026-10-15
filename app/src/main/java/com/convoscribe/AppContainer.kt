@@ -6,6 +6,7 @@ import com.convoscribe.asr.TranscriberFactory
 import com.convoscribe.audio.MicAudioSource
 import com.convoscribe.data.AppDatabase
 import com.convoscribe.data.SessionRepository
+import com.convoscribe.diarization.DiarizeSessionUseCase
 import com.convoscribe.diarization.DiarizerFactory
 import com.convoscribe.engine.sherpa.SherpaDiarizerFactory
 import com.convoscribe.engine.sherpa.SherpaTranscriberFactory
@@ -140,6 +141,21 @@ class AppContainer(val context: Context) {
      */
     val diarizerFactory: DiarizerFactory = SherpaDiarizerFactory(
         store = modelStore,
+        settings = settingsRepository
+    )
+
+    /**
+     * Use case that owns the "turn a TRANSCRIBED session into a
+     * DIARIZED one" pipeline. Called from the recording service
+     * after the controller's stop() returns, and from the
+     * crash-recovery loop on app start (TASK-19). Wired to the
+     * sherpa-backed [diarizerFactory] today; the `readSamples`
+     * parameter on the use case defaults to [com.convoscribe.audio.WavReader.readMono16k]
+     * so the test suite can inject a trivial stub.
+     */
+    val diarizeSessionUseCase = DiarizeSessionUseCase(
+        repository = sessionRepository,
+        diarizerFactory = diarizerFactory,
         settings = settingsRepository
     )
 }
