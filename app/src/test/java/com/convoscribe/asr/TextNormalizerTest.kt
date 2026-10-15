@@ -68,4 +68,15 @@ class TextNormalizerTest {
         // are not title-cased — there's no "first letter".
         assertEquals("1 2 3!", TextNormalizer.normalize("  1   2   3!  "))
     }
+
+    @Test
+    fun normalize_frenchAccentedUppercaseCapitalisesFirstChar() {
+        // The TASK-28 acceptance criterion: a French all-caps
+        // utterance must come back with only the first character
+        // capitalised — accented letters like É must stay
+        // readable. Using Locale.ROOT for lowercase/titlecase
+        // keeps the result stable across device locales (e.g.
+        // Turkish where `I` is not lowercased).
+        assertEquals("L'été est chaud", TextNormalizer.normalize("L'ÉTÉ EST CHAUD"))
+    }
 }

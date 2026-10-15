@@ -1,3 +1,80 @@
+## 2026-10-15 — TASK-28: French transcription: language setting, model download and per-session language
+
+Added French as a second ASR language: `TextNormalizer` now pins its
+case-mapping through `Locale.ROOT` so French accented letters round-trip
+predictably; `SettingsScreen` exposes an "English" / "Français"
+`SingleChoiceSegmentedButtonRow` bound to `AppSettings.asrLanguage` and
+saved immediately, with the "French uses the CPU engine." hint under
+the engine selector when Français is selected; `ModelSetupViewModel`'s
+initial `totalBytes` now comes from `store.missing(bundles).sumOf { it.totalBytes }`
+(so the on-screen "About N MB" matches what lands on disk) and the
+factory already pulled `bundles = ModelCatalog.requiredFor(language,
+engine)`, so the "French missing + everything else installed" path
+ends up downloading the single French bundle only; the home and
+`MainActivity` already read `settings.asrLanguage`, so a French session
+that arrives before its bundle is downloaded routes to `setup`; the
+settings screen shows "Model installed" or "Model not downloaded
+(N MB) – it will be downloaded before your next recording" under the
+language selector plus a "Delete French model" text button that
+invokes `modelStore.delete(ModelCatalog.ASR_FR)`; the per-session
+subtitle in `HomeViewModel` gains a `language` parameter that appends
+`" · FR"` only when the language is not `"en"`; the obsolete
+`settings_transcription_language_value` string and the
+`settings_transcription_language_label` row's disabled look were both
+dropped in favour of the active segmented control; six new strings
+(`settings_transcription_language_en`, `…_fr`,
+`…_french_uses_cpu`, `…_language_model_installed`,
+`…_language_model_missing`, `…_language_delete_fr`).
+
+`RecordingController` already threads the language into the factory
+and persists it on the session; `toRow()` now passes `language` to the
+formatter, the formatter carries it through, and French sessions end
+with `" · FR"` while English sessions get no language suffix.
+
+`TextNormalizer.normalize("L'ÉTÉ EST CHAUD") == "L'été est chaud"`
+(uppercase É round-trips to É through `Locale.ROOT`).
+
+`SettingsViewModel` gained `setLanguage`, `deleteFrenchModel` and a
+settings-flow collector that mirrors changes onto the new
+`frenchModelInstalled`, `selectedLanguageModelInstalled` and
+`selectedLanguageModelMissingBytes` fields. `setLanguage` / `setEngine`
+refresh those fields synchronously so the test (or a recomposition)
+that reads `state.value` immediately after a click already sees the
+post-update model status, without waiting for the collector to fire.
+
+Tests (10 new, 257 total — was 247):
+
+- `TextNormalizerTest` adds `normalize_frenchAccentedUppercaseCapitalisesFirstChar`
+  for `"L'ÉTÉ EST CHAUD"`.
+- `SessionSubtitleTest` adds `frenchSession_appendsUppercaseLanguageSuffix`,
+  `englishSession_hasNoLanguageSuffix`,
+  `frenchSessionWithRecordingStatus_appendsFrAfterStatus` and
+  `emptyLanguage_doesNotAddLanguageSuffix`; existing tests
+  rewritten with named arguments so they still pin the old format.
+- `ModelSetupViewModelTest` adds
+  `start_mixedLanguageAndEngineOnlyDownloadsMissingFrenchBundle`:
+  the segmentation + embedding bundles are pre-installed via
+  `RandomAccessFile.setLength` to avoid OOM on the NPU bundle's
+  ≈592 MB `libencoder.so`, then with `requiredFor("fr", "npu")` we
+  get `bundles[0].id == "asr-fr-kroko-2025-08-06"`,
+  `store.missing(bundles).map { it.id } == ["asr-fr-kroko-2025-08-06"]`,
+  `vm.state.value.totalBytes == 71_052_319L` and the downloader is
+  called exactly once.
+- `SettingsViewModelTest` adds `setLanguage_persistsImmediatelyAndIgnoresUnknownValues`,
+  `setLanguage_toFrench_marksModelAsNotInstalled` (French bundle
+  is not on disk so `selectedLanguageModelInstalled == false` and
+  `selectedLanguageModelMissingBytes == 71_052_319L`),
+  `deleteFrenchModel_removesBundleFromDisk_andUpdatesState`, and
+  `deletingFrenchModel_whileEnglishIsActive_keepsEnglishInstalled`
+  which installs `ASR_EN_NPU` (the NPU bundle, since the default
+  engine is "npu") + `ASR_FR`, deletes the French bundle, and
+  asserts English is still installed while French is gone.
+
+Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (257 tests, ktlint clean, lintDebug clean — 62 warnings
+pre-existing, 0 errors — assembleDebug succeeds).
+
 ## 2026-10-15 — TASK-27: Ask tab: question/answer chat about the transcript
 
 Added `ui/session/AskViewModel.kt` and the matching unit test

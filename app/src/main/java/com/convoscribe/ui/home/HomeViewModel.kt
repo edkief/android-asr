@@ -76,25 +76,30 @@ private fun SessionEntity.toRow(): SessionRow = SessionRow(
     subtitle = sessionSubtitle(
         createdAt = createdAt,
         durationMs = durationMs,
-        status = status
+        status = status,
+        language = language
     ),
     status = status
 )
 
 /**
  * Format the second line under each session row: `<date>, <time> ·
- * <duration>[ · <status>]`.
+ * <duration>[ · <status>][ · <language>]`.
  *
  * Examples (with [ZoneOffset.UTC][java.time.ZoneOffset]):
- *  - `sessionSubtitle(epoch, 754_000, TRANSCRIBED, UTC) == "1 Jan 1970, 00:00 · 12:34"`;
- *  - `sessionSubtitle(now, 0, RECORDING, UTC) == "<date>, <time> · Recording…"`;
- *  - `sessionSubtitle(now, 90_000, DIARIZING, UTC) == "<date>, <time> · 01:30 · Identifying speakers…"`.
+ *  - `sessionSubtitle(epoch, 754_000, TRANSCRIBED, UTC, "en") == "1 Jan 1970, 00:00 · 12:34"`;
+ *  - `sessionSubtitle(now, 0, RECORDING, UTC, "en") == "<date>, <time> · Recording…"`;
+ *  - `sessionSubtitle(now, 90_000, DIARIZING, UTC, "en") == "<date>, <time> · 01:30 · Identifying speakers…"`;
+ *  - `sessionSubtitle(epoch, 754_000, TRANSCRIBED, UTC, "fr") == "1 Jan 1970, 00:00 · 12:34 · FR"`.
  *
  * Pinned to [Locale.UK] so the day/month order and the abbreviation
  * are stable regardless of the user's device locale. The status
  * suffix is appended verbatim from the spec, including the
  * horizontal ellipsis character — it is part of the user-facing
- * string so we are not free to swap it for "...".
+ * string so we are not free to swap it for "...". The language
+ * suffix is only shown when [language] is not the English default
+ * (`"en"`); other languages get a two-letter code uppercase to keep
+ * the subtitle concise.
  */
 private val DATE_FORMAT: DateTimeFormatter =
     DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.UK)
@@ -103,19 +108,22 @@ fun sessionSubtitle(
     createdAt: Long,
     durationMs: Long,
     status: SessionStatus,
+    language: String = "en",
     zone: ZoneId = ZoneId.systemDefault()
 ): String {
     val stamp = LocalDateTime.ofInstant(Instant.ofEpochMilli(createdAt), zone)
         .format(DATE_FORMAT)
     val duration = formatDuration(durationMs)
     val base = if (duration.isEmpty()) stamp else "$stamp · $duration"
-    val suffix = when (status) {
+    val statusSuffix = when (status) {
         SessionStatus.RECORDING -> "Recording…"
         SessionStatus.DIARIZING -> "Identifying speakers…"
         SessionStatus.DIARIZATION_FAILED -> "Speaker detection failed"
         SessionStatus.TRANSCRIBED, SessionStatus.DIARIZED -> ""
     }
-    return if (suffix.isEmpty()) base else "$base · $suffix"
+    val withStatus = if (statusSuffix.isEmpty()) base else "$base · $statusSuffix"
+    val languageSuffix = if (language == "en" || language.isEmpty()) "" else " · ${language.uppercase(Locale.ROOT)}"
+    return withStatus + languageSuffix
 }
 
 /**

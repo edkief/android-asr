@@ -41,7 +41,15 @@ class ModelSetupViewModel(
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(
-        SetupUiState(totalBytes = store.missing(bundles).sumOf { it.downloadBytes })
+        // The on-screen "About N MB will be downloaded" string
+        // reflects what lands on disk, not the compressed archive
+        // body the network pushes. `totalBytes` sums every
+        // declared file in the missing bundles (the same value
+        // individual files are tracked against by the downloader),
+        // and for archive-based bundles equals the unpacked file
+        // sizes — closer to "this is how much space you'll free
+        // up if you delete it later" than `downloadBytes`.
+        SetupUiState(totalBytes = store.missing(bundles).sumOf { it.totalBytes })
     )
     val state: StateFlow<SetupUiState> = _state.asStateFlow()
 

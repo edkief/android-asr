@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.convoscribe.llm.ChatClient
 import com.convoscribe.llm.LlmException
+import com.convoscribe.models.ModelCatalog
+import com.convoscribe.models.ModelStore
 import com.convoscribe.settings.AppSettings
 import com.convoscribe.settings.SettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,6 +67,10 @@ data class SettingsForm(
  * @property asrEngine `"npu"` or `"cpu"` — kept separate from
  *   [SettingsForm] because the segmented button writes
  *   immediately on click (no "Save" round-trip).
+ * @property asrLanguage `"en"` or `"fr"` — same pattern as
+ *   [asrEngine]: written immediately through
+ *   [SettingsViewModel.setLanguage] so the user does not have to
+ *   tap Save before the FAB picks up the new language.
  * @property testing `true` while [SettingsViewModel.testConnection]
  *   is in flight; the screen greys out the button and shows a
  *   spinner / "Testing…" line.
@@ -77,14 +83,29 @@ data class SettingsForm(
  * @property saved `true` for one snapshot after [SettingsViewModel.save]
  *   completes; the screen reads it once (via `LaunchedEffect`) to
  *   pop the toast/snackbar and reset it.
+ * @property frenchModelInstalled `true` when the French bundle is
+ *   fully on disk; the "Delete French model" text button is gated
+ *   on this when English is the active language.
+ * @property selectedLanguageModelInstalled `true` when the ASR
+ *   bundle for the currently-selected language and engine is
+ *   installed. Drives the "Model installed" / "Model not
+ *   downloaded" caption under the language selector.
+ * @property selectedLanguageModelMissingBytes total on-disk size
+ *   (in bytes) of the ASR bundle that would need to be
+ *   downloaded to make `selectedLanguageModelInstalled` true.
+ *   Zero when the bundle is already installed.
  */
 data class SettingsUiState(
     val form: SettingsForm = SettingsForm(),
     val asrEngine: String = "npu",
+    val asrLanguage: String = "en",
     val testing: Boolean = false,
     val testResult: String? = null,
     val availableModels: List<String> = emptyList(),
-    val saved: Boolean = false
+    val saved: Boolean = false,
+    val frenchModelInstalled: Boolean = false,
+    val selectedLanguageModelInstalled: Boolean = true,
+    val selectedLanguageModelMissingBytes: Long = 0L
 )
 
 /**
@@ -103,18 +124,31 @@ data class SettingsUiState(
  *    [ChatClient.listModels] and stores either `"Connected – N
  *    models: a, b, c"` (first 5 ids) or `"Failed: <message>"`.
  *
- * [setEngine] updates the ASR engine immediately: the segmented
- * button has its own save-on-click semantics, so the user does
- * not have to remember to tap Save before running Engine check.
+ * [setEngine] and [setLanguage] update immediately: the segmented
+ * buttons have their own save-on-click semantics, so the user does
+ * not have to remember to tap Save before running Engine check or
+ * before tapping the home FAB. Both methods synchronously refresh
+ * the model-status fields so a test (or a recomposition) that
+ * reads `state.value` immediately after the click sees the
+ * post-update model status without waiting for the settings-flow
+ * collector to fire.
+ *
+ * [deleteFrenchModel] removes the French bundle from disk via
+ * [ModelStore.delete]; the screen calls it from the "Delete
+ * French model" text button.
  *
  * @param repo persisted settings; written by `save`, read on
  *   construction to seed the form.
  * @param chatClient LLM client whose `listModels` powers the
  *   connection test. Injected so tests can pass a fake.
+ * @param modelStore on-disk model store, used to check
+ *   installation and to free space when the user deletes the
+ *   French bundle.
  */
 class SettingsViewModel(
     private val repo: SettingsRepository,
-    private val chatClient: ChatClient
+    private val chatClient: ChatClient,
+    private val modelStore: ModelStore
 ) : ViewModel() {
 
     private val _state: MutableStateFlow<SettingsUiState>
@@ -123,13 +157,29 @@ class SettingsViewModel(
     init {
         val current = repo.settings.value
         val form = SettingsForm.from(current, repo.apiKey())
-        _state = MutableStateFlow(
-            SettingsUiState(
+        val initial = computeModelState(
+            current = current,
+            base = SettingsUiState(
                 form = form,
-                asrEngine = current.asrEngine
+                asrEngine = current.asrEngine,
+                asrLanguage = current.asrLanguage
             )
         )
+        _state = MutableStateFlow(initial)
         state = _state.asStateFlow()
+        // Mirror settings changes through the state so a Save
+        // (or any other writer) re-evaluates the model-status
+        // fields without the screen needing to re-read. The
+        // `setLanguage` / `setEngine` callers also update the
+        // state synchronously so the recomposition that follows
+        // the click already sees the fresh values; the collector
+        // here is the safety net for Save (which writes the
+        // entire settings blob at once).
+        viewModelScope.launch {
+            repo.settings.collect { settings ->
+                _state.value = computeModelState(settings, _state.value)
+            }
+        }
     }
 
     /**
@@ -141,12 +191,12 @@ class SettingsViewModel(
     }
 
     /**
-     * Save the chosen ASR engine to the repo immediately (the
-     * segmented button is autonomous) and persist the current
-     * form via [SettingsRepository.update] + the encrypted
-     * `setApiKey`. The numeric `maxChars` is parsed with
-     * `toIntOrNull() ?: <current persisted value>` so an empty
-     * or non-numeric field does not blank it out.
+     * Save the chosen ASR engine and language to the repo
+     * immediately (the segmented buttons are autonomous) and
+     * persist the current form via [SettingsRepository.update] +
+     * the encrypted `setApiKey`. The numeric `maxChars` is parsed
+     * with `toIntOrNull() ?: <current persisted value>` so an
+     * empty or non-numeric field does not blank it out.
      *
      * Sets `saved = true` on the resulting state so the screen
      * can show a "Saved" toast/snackbar once (the screen is
@@ -164,7 +214,8 @@ class SettingsViewModel(
                 maxTranscriptChars = parsedChars,
                 numThreads = form.numThreads,
                 numSpeakers = form.numSpeakers,
-                clusterThreshold = form.clusterThreshold
+                clusterThreshold = form.clusterThreshold,
+                asrLanguage = _state.value.asrLanguage
             )
         }
         if (_state.value.asrEngine != current.asrEngine) {
@@ -176,11 +227,16 @@ class SettingsViewModel(
 
         // Re-seed the form from the freshly persisted settings so
         // the screen shows canonical values (e.g. trailing-slash
-        // stripped, out-of-range maxChars clamped).
+        // stripped, out-of-range maxChars clamped). The model-status
+        // fields are re-evaluated from the on-disk check below so
+        // a manual delete between two saves reflects immediately.
         val refreshed = repo.settings.value
-        _state.value = _state.value.copy(
-            form = SettingsForm.from(refreshed, refreshed.let { repo.apiKey() }),
-            saved = true
+        _state.value = computeModelState(
+            current = refreshed,
+            base = _state.value.copy(
+                form = SettingsForm.from(refreshed, refreshed.let { repo.apiKey() }),
+                saved = true
+            )
         )
     }
 
@@ -189,12 +245,73 @@ class SettingsViewModel(
      * immediately so the user can hit Engine check without
      * touching Save. The update is delegated to
      * [SettingsRepository.update] which only accepts the two
-     * documented values.
+     * documented values. The model's on-disk state is refreshed
+     * synchronously so the next recomposition already shows the
+     * correct "Model installed / not downloaded" caption.
      */
     fun setEngine(engine: String) {
         if (engine != "npu" && engine != "cpu") return
-        _state.value = _state.value.copy(asrEngine = engine)
+        if (_state.value.asrEngine == engine) return
+        _state.value = computeModelState(
+            current = repo.settings.value.copy(asrEngine = engine),
+            base = _state.value.copy(asrEngine = engine)
+        )
         repo.update { previous -> previous.copy(asrEngine = engine) }
+    }
+
+    /**
+     * Mark the language as `"en"` or `"fr"` and persist it
+     * immediately. The screen wires the segmented button to this
+     * method so the home FAB picks up the new language without
+     * requiring the user to tap Save first.
+     *
+     * `ModelCatalog.requiredFor` then re-derives the right ASR
+     * bundle on the next read; for French the engine has no NPU
+     * bundle so `effectiveEngine` snaps back to CPU and the
+     * engine selector is unchanged (the user can leave it on
+     * NPU; it just won't apply to a French session). The model
+     * status is refreshed synchronously.
+     */
+    fun setLanguage(language: String) {
+        if (language != "en" && language != "fr") return
+        if (_state.value.asrLanguage == language) return
+        _state.value = computeModelState(
+            current = repo.settings.value.copy(asrLanguage = language),
+            base = _state.value.copy(asrLanguage = language)
+        )
+        repo.update { previous -> previous.copy(asrLanguage = language) }
+    }
+
+    /**
+     * Remove the French ASR bundle from disk. Called from the
+     * "Delete French model" text button in Settings when the
+     * user wants to free up the ≈71 MB that the French bundle
+     * occupies. No-op when the bundle isn't installed.
+     *
+     * The disk removal is small (`deleteRecursively` on a single
+     * bundle directory under `filesDir/models/`) so we run it
+     * directly on `viewModelScope` without a dispatcher switch —
+     * the deletion itself is fast and bypassing `Dispatchers.IO`
+     * keeps unit tests deterministic (a real `Dispatchers.IO`
+     * thread escapes `StandardTestDispatcher`'s `advanceUntilIdle`).
+     * The post-check then updates `frenchModelInstalled` so the
+     * button disappears from the UI without waiting for the
+     * settings flow collector to fire (it would only fire on a
+     * settings write, which a pure delete never triggers).
+     */
+    fun deleteFrenchModel() {
+        viewModelScope.launch {
+            modelStore.delete(ModelCatalog.ASR_FR)
+            _state.value = _state.value.copy(
+                frenchModelInstalled = modelStore.isInstalled(ModelCatalog.ASR_FR),
+                selectedLanguageModelInstalled = modelStore.isInstalled(
+                    ModelCatalog.asrFor(_state.value.asrLanguage, _state.value.asrEngine)
+                ),
+                selectedLanguageModelMissingBytes = computeMissingBytes(
+                    _state.value.asrLanguage, _state.value.asrEngine
+                )
+            )
+        }
     }
 
     /**
@@ -245,5 +362,39 @@ class SettingsViewModel(
         if (_state.value.saved) {
             _state.value = _state.value.copy(saved = false)
         }
+    }
+
+    /**
+     * Compute the model-status fields from the supplied settings
+     * and the on-disk check. Used both by the settings-flow
+     * collector (which receives a real [AppSettings]) and by
+     * `setLanguage` / `setEngine` (which synthesise the next
+     * settings snapshot from the already-known state). The
+     * `base` snapshot is updated in-place so the rest of the UI
+     * state — `form`, `saved`, `testing`, … — is preserved
+     * across a refresh.
+     */
+    private fun computeModelState(current: AppSettings, base: SettingsUiState): SettingsUiState {
+        val bundle = ModelCatalog.asrFor(current.asrLanguage, current.asrEngine)
+        val installed = modelStore.isInstalled(bundle)
+        return base.copy(
+            asrEngine = current.asrEngine,
+            asrLanguage = current.asrLanguage,
+            frenchModelInstalled = modelStore.isInstalled(ModelCatalog.ASR_FR),
+            selectedLanguageModelInstalled = installed,
+            selectedLanguageModelMissingBytes = if (installed) 0L else bundle.totalBytes
+        )
+    }
+
+    /**
+     * Compute the bytes that need to be downloaded to make the
+     * current language's ASR bundle install-ready. Used after
+     * deletes (which do not write through `repo.update`) so the
+     * displayed "Model not downloaded (N MB)" string reflects
+     * the most recent on-disk value.
+     */
+    private fun computeMissingBytes(language: String, engine: String): Long {
+        val bundle = ModelCatalog.asrFor(language, engine)
+        return if (modelStore.isInstalled(bundle)) 0L else bundle.totalBytes
     }
 }

@@ -5,8 +5,10 @@ import androidx.test.core.app.ApplicationProvider
 import com.convoscribe.llm.ChatClient
 import com.convoscribe.llm.LlmException
 import com.convoscribe.llm.LlmMessage
+import com.convoscribe.models.ModelStore
 import com.convoscribe.settings.InMemorySecretStore
 import com.convoscribe.settings.SettingsRepository
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -23,7 +25,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
@@ -41,9 +45,13 @@ class SettingsViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
 
+    @get:Rule
+    val tmp = TemporaryFolder()
+
     private lateinit var context: Context
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var secrets: InMemorySecretStore
+    private lateinit var modelStore: ModelStore
 
     @Before
     fun setUp() {
@@ -54,6 +62,8 @@ class SettingsViewModelTest {
             Context.MODE_PRIVATE
         )
         secrets = InMemorySecretStore()
+        val modelsRoot: File = tmp.newFolder("models")
+        modelStore = ModelStore(modelsRoot)
     }
 
     @After
@@ -66,7 +76,7 @@ class SettingsViewModelTest {
     private fun newVm(
         repo: SettingsRepository = newRepo(),
         chatClient: ChatClient = FakeChatClient(models = emptyList())
-    ): SettingsViewModel = SettingsViewModel(repo, chatClient)
+    ): SettingsViewModel = SettingsViewModel(repo, chatClient, modelStore)
 
     @Test
     fun save_persistsFormAndApiKeyAndReloadReadsThemBack() {
@@ -238,6 +248,101 @@ class SettingsViewModelTest {
         assertEquals("m-seed", state.form.model)
         assertEquals(3, state.form.numThreads)
         assertEquals("sk-seed", state.form.apiKey)
+    }
+
+    @Test
+    fun setLanguage_persistsImmediatelyAndIgnoresUnknownValues() {
+        val repo = newRepo()
+        val vm = newVm(repo = repo)
+        vm.setLanguage("fr")
+        assertEquals("fr", repo.settings.value.asrLanguage)
+        assertEquals("fr", vm.state.value.asrLanguage)
+        // Unknown value must NOT touch the persistence layer or
+        // the form state.
+        vm.setLanguage("de")
+        assertEquals("fr", repo.settings.value.asrLanguage)
+        assertEquals("fr", vm.state.value.asrLanguage)
+    }
+
+    @Test
+    fun setLanguage_toFrench_marksModelAsNotInstalled() {
+        // Nothing on disk: the language selector must report
+        // the French bundle as missing and the missing-bytes
+        // value at 71_052_319 (the ASR_FR bundle's totalBytes).
+        val repo = newRepo()
+        val vm = newVm(repo = repo)
+        vm.setLanguage("fr")
+        val s = vm.state.value
+        assertEquals("fr", s.asrLanguage)
+        assertFalse(s.selectedLanguageModelInstalled)
+        assertEquals(71_052_319L, s.selectedLanguageModelMissingBytes)
+    }
+
+    @Test
+    fun deleteFrenchModel_removesBundleFromDisk_andUpdatesState() = runTest(dispatcher) {
+        // Pretend the French bundle is installed: write every
+        // declared file at its declared size into the
+        // ModelStore's bundle directory. We use a sparse
+        // RandomAccessFile (length set to the declared size but
+        // never actually written) so the test does not have to
+        // allocate a multi-hundred-megabyte byte array.
+        val repo = newRepo()
+        for (file in com.convoscribe.models.ModelCatalog.ASR_FR.files) {
+            val onDisk = modelStore.fileFor(com.convoscribe.models.ModelCatalog.ASR_FR, file.fileName)
+            onDisk.parentFile?.mkdirs()
+            java.io.RandomAccessFile(onDisk, "rw").use { it.setLength(file.sizeBytes) }
+        }
+        assertTrue(modelStore.isInstalled(com.convoscribe.models.ModelCatalog.ASR_FR))
+
+        val vm = newVm(repo = repo)
+        assertTrue(vm.state.value.frenchModelInstalled)
+
+        vm.deleteFrenchModel()
+        advanceUntilIdle()
+
+        assertFalse(modelStore.isInstalled(com.convoscribe.models.ModelCatalog.ASR_FR))
+        assertFalse(vm.state.value.frenchModelInstalled)
+    }
+
+    @Test
+    fun deletingFrenchModel_whileEnglishIsActive_keepsEnglishInstalled() = runTest(dispatcher) {
+        // Pre-install both English and French so the French
+        // bundle is removable without affecting the user's
+        // chosen language (English). The default engine is
+        // "npu", so the English bundle that satisfies the
+        // `selectedLanguageModelInstalled` check is
+        // [ModelCatalog.ASR_EN_NPU], not the CPU-only
+        // [ModelCatalog.ASR_EN].
+        for (bundle in listOf(
+            com.convoscribe.models.ModelCatalog.ASR_EN_NPU,
+            com.convoscribe.models.ModelCatalog.ASR_FR
+        )) {
+            for (file in bundle.files) {
+                val onDisk = modelStore.fileFor(bundle, file.fileName)
+                onDisk.parentFile?.mkdirs()
+                // The NPU bundle's `encoder.so` is 591 MB; a full
+                // ByteArray would OOM the test JVM. A sparse file
+                // via RandomAccessFile.setLength records the
+                // expected size on disk without allocating it.
+                java.io.RandomAccessFile(onDisk, "rw").use { it.setLength(file.sizeBytes) }
+            }
+        }
+        val repo = newRepo()
+        val vm = newVm(repo = repo)
+        assertEquals("en", vm.state.value.asrLanguage)
+        assertTrue(vm.state.value.selectedLanguageModelInstalled)
+        assertTrue(vm.state.value.frenchModelInstalled)
+
+        vm.deleteFrenchModel()
+        advanceUntilIdle()
+
+        // English (the NPU bundle, since the default engine is
+        // "npu") is untouched, French is gone.
+        assertTrue(modelStore.isInstalled(com.convoscribe.models.ModelCatalog.ASR_EN_NPU))
+        assertFalse(modelStore.isInstalled(com.convoscribe.models.ModelCatalog.ASR_FR))
+        assertEquals("en", vm.state.value.asrLanguage)
+        assertTrue(vm.state.value.selectedLanguageModelInstalled)
+        assertFalse(vm.state.value.frenchModelInstalled)
     }
 
     /**

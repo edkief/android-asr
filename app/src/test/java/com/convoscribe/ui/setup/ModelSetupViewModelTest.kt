@@ -3,6 +3,7 @@ package com.convoscribe.ui.setup
 import app.cash.turbine.test
 import com.convoscribe.models.DownloadEvent
 import com.convoscribe.models.ModelBundle
+import com.convoscribe.models.ModelCatalog
 import com.convoscribe.models.ModelDownloadException
 import com.convoscribe.models.ModelDownloads
 import com.convoscribe.models.ModelStore
@@ -41,13 +42,14 @@ class ModelSetupViewModelTest {
     val tmp = TemporaryFolder()
 
     private lateinit var store: ModelStore
+    private lateinit var modelsRoot: File
     private lateinit var bundle: ModelBundle
     private val dispatcher = StandardTestDispatcher()
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        val modelsRoot: File = tmp.newFolder("models")
+        modelsRoot = tmp.newFolder("models")
         store = ModelStore(modelsRoot)
         // One tiny bundle so `store.missing(...)` is non-empty and
         // `totalBytes` is whatever we declare here.
@@ -202,6 +204,68 @@ class ModelSetupViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
 
+        assertEquals(1, downloads.callCount)
+    }
+
+    /**
+     * TASK-28 acceptance criterion: with the English bundles
+     * already installed but the French language selected, the
+     * setup screen must only fetch the missing French bundle and
+     * the [SetupUiState.totalBytes] must equal the bundle's own
+     * `totalBytes` (71_052_319). The other required bundles
+     * (segmentation + embedding) are language-agnostic and remain
+     * installed between sessions, so they must not appear in
+     * [ModelStore.missing].
+     */
+    @Test
+    fun start_mixedLanguageAndEngineOnlyDownloadsMissingFrenchBundle() = runTest(dispatcher) {
+        // Pre-create the segmentation and embedding bundles on disk
+        // so `store.missing(...)` finds them installed and skips
+        // them. Only ASR_FR remains to download.
+        for (installed in listOf(ModelCatalog.SEGMENTATION, ModelCatalog.EMBEDDING)) {
+            for (file in installed.files) {
+                val onDisk = File(File(modelsRoot, installed.id), file.fileName)
+                onDisk.parentFile?.mkdirs()
+                onDisk.writeBytes(ByteArray(file.sizeBytes.toInt()) { 0 })
+            }
+        }
+        // English ASR: not installed; the test passes engine "npu"
+        // but `effectiveEngine` maps fr+npu back to cpu so what is
+        // actually wanted is `ModelCatalog.ASR_FR`.
+        val bundles = ModelCatalog.requiredFor("fr", "npu")
+        assertEquals(3, bundles.size)
+        assertEquals("asr-fr-kroko-2025-08-06", bundles[0].id)
+        // Confirm the store agrees only the French bundle is missing.
+        val missing = store.missing(bundles)
+        assertEquals(listOf("asr-fr-kroko-2025-08-06"), missing.map { it.id })
+
+        val events = MutableSharedFlow<DownloadEvent>(replay = Int.MAX_VALUE)
+        val downloads = RecordingDownloads(events)
+        val vm = ModelSetupViewModel(downloads, store, bundles)
+
+        // Acceptance criterion #1: the UI's advertised total
+        // matches the bundle's file-sum, not the (zero for an
+        // uncompressed bundle) downloadBytes or any other figure.
+        assertEquals(71_052_319L, vm.state.value.totalBytes)
+
+        vm.state.test {
+            awaitItem() // initial
+            vm.start()
+            // running=true, doneBytes reset.
+            val running = awaitItem()
+            assertEquals(true, running.running)
+            assertEquals(0L, running.doneBytes)
+            // Complete the download: finished=true, doneBytes==total.
+            events.tryEmit(DownloadEvent.Completed)
+            val final = awaitItem()
+            assertEquals(true, final.finished)
+            assertEquals(71_052_319L, final.doneBytes)
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        // The downloader must have been called exactly once, with
+        // only the French bundle (the two English-agnostic
+        // models are skipped because they are already installed).
         assertEquals(1, downloads.callCount)
     }
 }

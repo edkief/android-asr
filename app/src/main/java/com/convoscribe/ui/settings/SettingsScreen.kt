@@ -32,6 +32,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -108,7 +109,8 @@ fun SettingsScreen(navController: NavHostController) {
             initializer {
                 SettingsViewModel(
                     repo = container.settingsRepository,
-                    chatClient = container.chatClient
+                    chatClient = container.chatClient,
+                    modelStore = container.modelStore
                 )
             }
         }
@@ -192,12 +194,18 @@ fun SettingsScreen(navController: NavHostController) {
             )
             TranscriptionSection(
                 engine = state.asrEngine,
+                language = state.asrLanguage,
                 threads = state.form.numThreads,
+                frenchModelInstalled = state.frenchModelInstalled,
+                selectedLanguageModelInstalled = state.selectedLanguageModelInstalled,
+                selectedLanguageModelMissingBytes = state.selectedLanguageModelMissingBytes,
                 onEngineChange = vm::setEngine,
+                onLanguageChange = vm::setLanguage,
                 onThreadsChange = { threads ->
                     vm.update(state.form.copy(numThreads = threads))
                 },
-                onEngineCheck = { navController.navigate("engine-check") }
+                onEngineCheck = { navController.navigate("engine-check") },
+                onDeleteFrenchModel = vm::deleteFrenchModel
             )
             SpeakersSection(
                 numSpeakers = state.form.numSpeakers,
@@ -333,18 +341,31 @@ private fun LanguageModelSection(
 
 /**
  * "Transcription" section: ASR engine segmented button (saves
- * immediately on click), the "Engine check" navigation row,
- * CPU threads 1..8 slider, and a disabled Language row showing
- * "English" until French support lands in a later task.
+ * immediately on click) with the "French uses the CPU engine."
+ * hint when Français is selected, a Language
+ * `SingleChoiceSegmentedButtonRow` ("English" / "Français")
+ * bound to `AppSettings.asrLanguage`, the model status caption
+ * under it ("Model installed" / "Model not downloaded (N MB) –
+ * it will be downloaded before your next recording") and a
+ * "Delete French model" text button when French is selected but
+ * not installed (or simply installed while English is active).
+ * Then the "Engine check" navigation row and a CPU threads
+ * 1..8 slider.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TranscriptionSection(
     engine: String,
+    language: String,
     threads: Int,
+    frenchModelInstalled: Boolean,
+    selectedLanguageModelInstalled: Boolean,
+    selectedLanguageModelMissingBytes: Long,
     onEngineChange: (String) -> Unit,
+    onLanguageChange: (String) -> Unit,
     onThreadsChange: (Int) -> Unit,
-    onEngineCheck: () -> Unit
+    onEngineCheck: () -> Unit,
+    onDeleteFrenchModel: () -> Unit
 ) {
     SectionHeader(text = stringResource(R.string.settings_section_transcription))
     Text(
@@ -373,6 +394,66 @@ private fun TranscriptionSection(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+    if (language == "fr") {
+        // French is only supported on the CPU engine today;
+        // explain that the engine selector is unchanged but
+        // does not apply to a French recording.
+        Text(
+            text = stringResource(R.string.settings_transcription_french_uses_cpu),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = stringResource(R.string.settings_transcription_language_label),
+        style = MaterialTheme.typography.titleSmall
+    )
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        val englishSelected = language == "en"
+        SegmentedButton(
+            selected = englishSelected,
+            onClick = { onLanguageChange("en") },
+            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+        ) {
+            Text(text = stringResource(R.string.settings_transcription_language_en))
+        }
+        SegmentedButton(
+            selected = !englishSelected,
+            onClick = { onLanguageChange("fr") },
+            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+        ) {
+            Text(text = stringResource(R.string.settings_transcription_language_fr))
+        }
+    }
+    Spacer(Modifier.height(4.dp))
+    if (selectedLanguageModelInstalled) {
+        Text(
+            text = stringResource(R.string.settings_transcription_language_model_installed),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    } else {
+        Text(
+            text = stringResource(
+                R.string.settings_transcription_language_model_missing,
+                (selectedLanguageModelMissingBytes / 1_000_000L).toInt()
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+    // The "Delete French model" action is only useful when the
+    // French bundle is actually on disk. Show it whenever it's
+    // installed, regardless of the active language: a user with
+    // English selected and French sitting unused on disk probably
+    // wants the ≈71 MB back.
+    if (frenchModelInstalled) {
+        TextButton(onClick = onDeleteFrenchModel) {
+            Text(text = stringResource(R.string.settings_transcription_language_delete_fr))
+        }
+    }
+    Spacer(Modifier.height(8.dp))
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -402,22 +483,6 @@ private fun TranscriptionSection(
         text = threads.toString(),
         style = MaterialTheme.typography.bodySmall
     )
-    Spacer(Modifier.height(8.dp))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = stringResource(R.string.settings_transcription_language_label),
-            style = MaterialTheme.typography.bodyLarge
-        )
-        Text(
-            text = stringResource(R.string.settings_transcription_language_value),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
 }
 
 /**

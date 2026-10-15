@@ -1,5 +1,7 @@
 package com.convoscribe.asr
 
+import java.util.Locale
+
 /**
  * Normalises the raw text a streaming recognizer returns into the
  * shape the UI displays and the database stores.
@@ -17,10 +19,14 @@ package com.convoscribe.asr
  *     internal whitespace to a single space;
  *  2. if the text contains at least one letter *and* no
  *     lower-case letter (`text.none { it.isLowerCase() }`) it is
- *     treated as all-uppercase. Lower-case it, then capitalise the
- *     first character and replace every standalone `i` with `I`
- *     (`\bi\b` -> `I`). The pronoun substitution is skipped for
- *     mixed-case text to avoid touching words like `inline`;
+ *     treated as all-uppercase. Lower-case it (using
+ *     [Locale.ROOT] so the result is stable across device
+ *     locales — `lowercase()` on a Turkish device would, for
+ *     instance, leave an `I` untouched), then capitalise the
+ *     first character (also [Locale.ROOT]) and replace every
+ *     standalone `i` with `I` (`\bi\b` -> `I`). The pronoun
+ *     substitution is skipped for mixed-case text to avoid
+ *     touching words like `inline`;
  *  3. otherwise capitalise the first character only;
  *  4. the empty string stays empty.
  *
@@ -51,15 +57,15 @@ object TextNormalizer {
 
         val allUpper = trimmed.none { it.isLowerCase() }
         val cased: String = if (allUpper) {
-            // lower-case, then put the initial capital + standalone
-            // "i" -> "I" back. We rely on the regex anchoring on
-            // the ASCII word-boundary because the source strings
-            // come from a limited English/French vocabulary where
-            // accented letters never form standalone "i".
-            STANDALONE_I.replace(trimmed.lowercase()) { it.value.uppercase() }
-                .replaceFirstChar { ch -> ch.titlecase() }
+            // lower-case (Locale.ROOT), then put the initial capital +
+            // standalone "i" -> "I" back. We anchor on the ASCII
+            // word-boundary because the source strings come from a
+            // limited English/French vocabulary where accented
+            // letters never form a standalone "i".
+            STANDALONE_I.replace(trimmed.lowercase(Locale.ROOT)) { it.value.uppercase() }
+                .replaceFirstChar { ch -> ch.titlecase(Locale.ROOT) }
         } else {
-            trimmed.replaceFirstChar { ch -> ch.titlecase() }
+            trimmed.replaceFirstChar { ch -> ch.titlecase(Locale.ROOT) }
         }
         return cased
     }
