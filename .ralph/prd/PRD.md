@@ -12,9 +12,7 @@ or for questions about the conversation.
 3. Sessions (audio, transcript, speakers, summary, Q&A) persist across app restarts, in a list.
 4. Summarise a session, or ask questions about it, through an OpenAI-compatible
    `/v1/chat/completions` endpoint, with answers streamed token by token.
-5. v2: enroll known speakers by voice so they are named automatically.
-6. v2 (last tasks): optional "high-accuracy final transcript": after diarization, re-transcribe each
-   speaker turn with the offline multilingual Parakeet TDT 0.6B v3 model (670 MB, opt-in).
+5. v2 (last tasks): enroll known speakers by voice so they are named automatically.
 
 ## Scope
 
@@ -83,11 +81,10 @@ or for questions about the conversation.
 | `asr-fr-kroko-2025-08-06` | same file names; streaming, modelType `zipformer2` | `https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06/resolve/main/<file>` |
 | `seg-pyannote-3-0-int8` | `model.int8.onnx` | `https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.int8.onnx` |
 | `emb-wespeaker-resnet34-lm` | `wespeaker_en_voxceleb_resnet34_LM.onnx` | `https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx` (the tag really is spelled `recongition`) |
-| `asr-parakeet-tdt-0.6b-v3-int8` (v2, optional) | `encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt`; offline, modelType `nemo_transducer` | `https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/<file>` |
 
-Exact byte sizes are in TASK-4 (and TASK-31 for Parakeet). Licences: Kroko community models
+Exact byte sizes are in TASK-4. Licences: Kroko community models
 CC-BY-SA 4.0 (attribution shown in README and Settings → About), pyannote MIT, WeSpeaker Apache-2.0,
-Parakeet v3 CC-BY-4.0, sherpa-onnx Apache-2.0.
+sherpa-onnx Apache-2.0.
 
 ## Acceptance criteria (project)
 
@@ -100,8 +97,6 @@ Parakeet v3 CC-BY-4.0, sherpa-onnx Apache-2.0.
   are saved with the session.
 - French can be selected in Settings and transcribes French speech.
 - (v2) An enrolled speaker is labelled by name in a new recording.
-- (v2) With "High-accuracy final transcript" on, a finished session's lines are re-transcribed per
-  speaker turn by Parakeet v3; if that fails the live transcript is kept.
 - `docs/MANUAL_TEST.md` lists the on-device checks.
 
 ## Assumptions

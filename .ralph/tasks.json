@@ -28,8 +28,5 @@
   { "id": "TASK-27", "passes": false },
   { "id": "TASK-28", "passes": false },
   { "id": "TASK-29", "passes": false },
-  { "id": "TASK-30", "passes": false },
-  { "id": "TASK-31", "passes": false },
-  { "id": "TASK-32", "passes": false },
-  { "id": "TASK-33", "passes": false }
+  { "id": "TASK-30", "passes": false }
 ]
