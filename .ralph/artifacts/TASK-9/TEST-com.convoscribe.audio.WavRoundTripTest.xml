@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.convoscribe.audio.WavRoundTripTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-15T16:35:04" hostname="android-asr-main" time="0.111">
+  <properties/>
+  <testcase name="roundTrip_chunkedWrites_assembleInOrder" classname="com.convoscribe.audio.WavRoundTripTest" time="0.02"/>
+  <testcase name="reader_throwsOnNonRiffFile" classname="com.convoscribe.audio.WavRoundTripTest" time="0.056"/>
+  <testcase name="writer_produces44ByteHeader_andPatchesSizesOnClose" classname="com.convoscribe.audio.WavRoundTripTest" time="0.003"/>
+  <testcase name="reader_throwsOn24BitWav" classname="com.convoscribe.audio.WavRoundTripTest" time="0.017"/>
+  <testcase name="crashRecoveredFile_withZeroSizes_isReadAndRepairable" classname="com.convoscribe.audio.WavRoundTripTest" time="0.003"/>
+  <testcase name="roundTrip_convertsSamplesBackToFloatArray" classname="com.convoscribe.audio.WavRoundTripTest" time="0.003"/>
+  <testcase name="readEmpty_afterJustOpeningTheWriter_returnsEmptyArray" classname="com.convoscribe.audio.WavRoundTripTest" time="0.002"/>
+  <testcase name="reader_throwsOn44_1kHzWav" classname="com.convoscribe.audio.WavRoundTripTest" time="0.001"/>
+  <testcase name="repairHeader_throwsIfFileIsShorterThanTheHeader" classname="com.convoscribe.audio.WavRoundTripTest" time="0.004"/>
+  <testcase name="reader_throwsOnFileSmallerThanHeader" classname="com.convoscribe.audio.WavRoundTripTest" time="0.001"/>
+  <testcase name="reader_throwsOnStereoWav" classname="com.convoscribe.audio.WavRoundTripTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

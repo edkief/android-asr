@@ -2,6 +2,39 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-9 — Audio capture, PCM conversion, WAV writer and reader
+Added `audio/AudioFormat.kt` with `object AudioSpec { SAMPLE_RATE = 16_000, CHUNK_SAMPLES = 1_600 }`
+(suppressed the `standard:filename` ktlint rule because the spec pins the file name).
+`audio/Pcm.kt` provides `ShortArray.toFloatSamples()` (each value / 32 768f) and
+`samplesToMs(samples: Long): Long` (samples * 1000 / SAMPLE_RATE). `audio/WavWriter.kt` is a
+`Closeable` `RandomAccessFile`-backed streaming writer: lays out a 44-byte PCM16 mono 16 kHz
+header on init (sizes zeroed), `write(ShortArray)` appends little-endian samples past the
+header, `samplesWritten` counter, `close()` seeks back to offsets 4 and 40 and patches the RIFF
+chunk size (36 + dataBytes) and the data chunk size separately (they are not contiguous and a
+single 8-byte write would clobber the "WAVE" fourcc). `companion object { repairHeader(file) }`
+recomputes both sizes from the file length for crash-recovered files. `audio/WavReader.kt`
+walks RIFF sub-chunks rather than assuming the data chunk starts at offset 44, validates
+format=1, channels=1, sample rate=16 000, bits=16 with clear `IllegalArgumentException`
+messages, and falls back to the bytes remaining on disk when the data size field is 0 or larger
+than the available bytes. `audio/AudioSource.kt` declares `interface AudioSource { fun chunks():
+Flow<ShortArray> }` and `class MicAudioSource` (`@SuppressLint("MissingPermission")` + comment
+explaining the caller is responsible for the permission) using `AudioRecord(
+MediaRecorder.AudioSource.VOICE_RECOGNITION, 16 kHz, MONO, PCM16, max(getMinBufferSize, CHUNK_SAMPLES*2*4))`
+inside a `flow { }.flowOn(Dispatchers.IO)`; throws `IllegalStateException("Microphone unavailable")`
+if `state != STATE_INITIALIZED` and surfaces `AudioRecord.read` error codes. Added
+`<uses-permission android:name="android.permission.RECORD_AUDIO" />` to the manifest. Tests
+under `app/src/test/java/com/convoscribe/audio/`: `PcmTest` covers `samplesToMs(16 000) == 1000`,
+`CHUNK_SAMPLES` -> 100 ms, zero, all-extreme PCM16 conversions, length preservation, and
+"returns a new array"; `WavRoundTripTest` (TemporaryFolder) covers the 16 000-sample file size
+and the two little-endian size fields, sample round-trip (16 384 -> 0.5f, -32 768 -> -1.0f),
+chunked writes reassemble in order, an empty writer produces a valid 44-byte WAV, a crash-recovered
+file (zero sizes, flushed via a separate `RandomAccessFile`) is read correctly and `repairHeader`
+fixes the sizes (and a second read returns the same samples), `repairHeader` throws on a
+sub-header file, and `readMono16k` throws on stereo, 44.1 kHz, 24-bit, non-RIFF, and
+sub-header files. Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (67 unit tests, all pass; ktlint, lint, assembleDebug clean).
+
 ## 2026-10-15 — TASK-8 — Room database: sessions, segments, speakers, chat messages
 Added `data/Enums.kt` (SessionStatus, MessageKind, MessageRole), `data/Converters.kt` (TypeConverters
 that round-trip enums through their `name`), the four entities

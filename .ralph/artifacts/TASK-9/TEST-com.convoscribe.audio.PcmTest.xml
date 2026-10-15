@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.convoscribe.audio.PcmTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-15T16:35:04" hostname="android-asr-main" time="0.003">
+  <properties/>
+  <testcase name="toFloatSamples_positiveHalfScaleIsHalf" classname="com.convoscribe.audio.PcmTest" time="0.001"/>
+  <testcase name="toFloatSamples_matchesManualScaling" classname="com.convoscribe.audio.PcmTest" time="0.0"/>
+  <testcase name="toFloatSamples_preservesLength" classname="com.convoscribe.audio.PcmTest" time="0.0"/>
+  <testcase name="samplesToMs_chunkSizeIsExactlyOneHundredMs" classname="com.convoscribe.audio.PcmTest" time="0.0"/>
+  <testcase name="toFloatSamples_zeroStaysZero" classname="com.convoscribe.audio.PcmTest" time="0.0"/>
+  <testcase name="toFloatSamples_returnsANewArray" classname="com.convoscribe.audio.PcmTest" time="0.0"/>
+  <testcase name="samplesToMs_16000SamplesAt16kIsOneSecond" classname="com.convoscribe.audio.PcmTest" time="0.0"/>
+  <testcase name="toFloatSamples_fullScaleNegativeIsMinusOne" classname="com.convoscribe.audio.PcmTest" time="0.0"/>
+  <testcase name="samplesToMs_zeroIsZero" classname="com.convoscribe.audio.PcmTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
