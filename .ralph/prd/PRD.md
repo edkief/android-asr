@@ -1,6 +1,7 @@
 # Product requirements: ConvoScribe
 
-An Android app for a **Qualcomm Dragonwing Q-6690** (QCS6690/QCM6690, Android 15, Hexagon NPU) device
+An Android app for a **Qualcomm Dragonwing Q-6690** (QCS6690/QCM6690, Hexagon NPU) device — the
+owner's test device is an Onyx Boox Tab (e-ink, build fingerprint `TabBoox:13`) —
 that transcribes conversations **on-device, on the NPU**,
 labels who spoke, and sends the transcript to a **remote OpenAI-compatible endpoint** for a summary
 or for questions about the conversation.
@@ -126,9 +127,13 @@ sherpa-onnx Apache-2.0; QNN runtime libraries — Qualcomm (redistributed by she
 
 ## Assumptions
 
-- The device runs Android 15 on arm64. The Q-6690's Hexagon NPU ("Hexagon 7xx", 6 TOPS) is one of
-  the HTP generations v68–v81 covered by the packaged QNN 2.40 libraries (not confirmed publicly;
-  the Engine check confirms it).
+- The device runs Android 13 or newer on arm64 (fingerprint says 13; minSdk 29 covers it).
+- The Q-6690's Hexagon NPU is a recent generation covered by the packaged QNN 2.40 libraries
+  (v68–v81) and is reachable by apps: the owner has decided to assume it works; the Engine check
+  confirms it on the device. sherpa's demo app on this device resolves `libcdsprpc.so` and sets
+  `ADSP_LIBRARY_PATH` without errors.
+- About 1.5 GB of free storage is needed for the first NPU start (model files + QNN context
+  binaries); the Engine check warns when less is available.
 - The device has enough free RAM for the 592 MB Nemotron NPU encoder plus diarization models.
 - sherpa-onnx's generic `android-aarch64` NPU model compiles on the device on first run (no
   precompiled context binaries exist for the Q-6690); this can take minutes and is cached.

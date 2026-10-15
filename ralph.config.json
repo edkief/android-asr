@@ -2,6 +2,7 @@
   "harness": "pi",
   "maxIterations": 20,
   "pinTask": true,
+  "model": "minimax/MiniMax-M3",
   "timeouts": {
     "iterationMs": 2700000,
     "inactivityMs": 300000,
@@ -30,16 +31,18 @@
     "deny": ["git push", "git remote", "rm -rf /", "shutdown", "reboot"]
   },
   "git": {
-    "push": "never",
-    "forcePush": false,
+    "push": "iteration",
+    "forcePush": true,
     "remote": "origin"
   },
   "ui": {
-    "enabled": false,
-    "host": "127.0.0.1",
+    "enabled": true,
+    "host": "0.0.0.0",
     "port": 4280,
+    "actions": "open",
     "push": {
       "enabled": true,
+      "forcePush": true,
       "subject": "mailto:you@example.com"
     }
   },
