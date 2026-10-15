@@ -19,6 +19,21 @@ data class ModelFile(
 )
 
 /**
+ * A bundle whose [ModelBundle.files] are not individually downloadable:
+ * the upstream only ships a single `.tar.bz2` (or similar) archive
+ * that has to be streamed and selectively extracted. The downloader
+ * GETs [url], decompresses the bzip2 layer, walks the tar entries and
+ * writes only the ones whose path matches one of the bundle's listed
+ * [ModelFile.fileName]s; any other entry is skipped. [sizeBytes] is
+ * the compressed body length and drives the progress bar.
+ */
+data class ModelArchive(
+    val url: String,
+    val sizeBytes: Long,
+    val rootDir: String
+)
+
+/**
  * ASR-specific filenames for a sherpa-onnx streaming recognizer. The
  * engine check (TASK-17) uses [encoder]/[decoder]/[joiner]/[tokens] to
  * build an `OnlineRecognizer`, and the engine check itself uses a
@@ -45,9 +60,19 @@ data class ModelBundle(
     val kind: ModelKind,
     val language: String?,
     val files: List<ModelFile>,
-    val asr: AsrFiles? = null
+    val asr: AsrFiles? = null,
+    val archive: ModelArchive? = null
 ) {
     val totalBytes: Long get() = files.sumOf { it.sizeBytes }
+
+    /**
+     * Byte count this bundle will move on the wire this download:
+     * the size of the upstream archive for archive-based bundles,
+     * otherwise the sum of every listed file (the same as
+     * [totalBytes]). The downloader uses this so the progress bar's
+     * denominator matches what actually flows over the network.
+     */
+    val downloadBytes: Long get() = archive?.sizeBytes ?: totalBytes
 }
 
 /**

@@ -1,5 +1,6 @@
 package com.convoscribe.models
 
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
 import kotlinx.coroutines.flow.toList
@@ -8,6 +9,8 @@ import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okio.Buffer
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorOutputStream
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -75,6 +78,33 @@ class ModelDownloaderTest {
             )
         )
         return bundle to body
+    }
+
+    /**
+     * Build a `.tar.bz2` archive whose entries are a `rootDir/`
+     * followed by [entries], with each entry's bytes supplied by
+     * [payloads]. Extra entries (e.g. a stray `extra.txt`) can be
+     * mixed in to test the skip path. Returns the compressed body
+     * ready to hand to [MockWebServer].
+     */
+    private fun buildTarBz2(rootDir: String, entries: List<String>, payloads: List<ByteArray>): ByteArray {
+        require(entries.size == payloads.size)
+        val sink = ByteArrayOutputStream()
+        BZip2CompressorOutputStream(sink).use { bz ->
+            TarArchiveOutputStream(bz).use { tar ->
+                tar.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX)
+                for (i in entries.indices) {
+                    val path = entries[i]
+                    val bytes = payloads[i]
+                    val entry = org.apache.commons.compress.archivers.tar.TarArchiveEntry(path)
+                    entry.size = bytes.size.toLong()
+                    tar.putArchiveEntry(entry)
+                    tar.write(bytes)
+                    tar.closeArchiveEntry()
+                }
+            }
+        }
+        return sink.toByteArray()
     }
 
     @Test
@@ -225,5 +255,172 @@ class ModelDownloaderTest {
         assertTrue(store.fileFor(multi, "b.bin").exists())
         // Spot-check the events collected in the first run too.
         assertNotNull(events)
+    }
+
+    @Test
+    fun archiveBundle_withFilesAndExtra_extractsListedFiles_andSkipsExtra() = runTest {
+        val aBytes = ByteArray(1_000) { (it % 251).toByte() }
+        val bBytes = ByteArray(500) { ((it + 50) % 251).toByte() }
+        val extraBytes = ByteArray(50) { (it % 251).toByte() }
+        val archive = buildTarBz2(
+            rootDir = "root",
+            entries = listOf("root/a.bin", "root/sub/b.bin", "root/extra.txt"),
+            payloads = listOf(aBytes, bBytes, extraBytes)
+        )
+        server.enqueue(MockResponse().setBody(Buffer().write(archive)))
+
+        val bundle = ModelBundle(
+            id = "npu",
+            displayName = "NPU model",
+            kind = ModelKind.ASR,
+            language = "en",
+            files = listOf(
+                ModelFile("a.bin", "", aBytes.size.toLong()),
+                ModelFile("sub/b.bin", "", bBytes.size.toLong())
+            ),
+            archive = ModelArchive(
+                url = server.url("/npu.tar.bz2").toString(),
+                sizeBytes = archive.size.toLong(),
+                rootDir = "root"
+            )
+        )
+
+        val events = downloader.download(listOf(bundle)).toList()
+
+        // The flow terminates with Completed.
+        assertEquals(DownloadEvent.Completed, events.last())
+        // Both listed files were extracted to disk at exact sizes;
+        // the unlisted entry was not.
+        val aTarget = File(modelsRoot, "npu/a.bin")
+        val bTarget = File(modelsRoot, "npu/sub/b.bin")
+        val extraTarget = File(modelsRoot, "npu/extra.txt")
+        assertTrue(aTarget.exists())
+        assertEquals(aBytes.size.toLong(), aTarget.length())
+        assertTrue(bTarget.exists())
+        assertEquals(bBytes.size.toLong(), bTarget.length())
+        assertTrue(!extraTarget.exists())
+        // No .part files survived the success path.
+        assertNull(File(modelsRoot, "npu/a.bin.part").takeIf { it.exists() })
+        assertNull(File(modelsRoot, "npu/sub/b.bin.part").takeIf { it.exists() })
+        // The bytes of the extracted files match the entries exactly.
+        assertTrue(aTarget.readBytes().contentEquals(aBytes))
+        assertTrue(bTarget.readBytes().contentEquals(bBytes))
+        // And the server got exactly one archive request.
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun archiveBundle_missingListedFile_throwsArchiveIsMissing() = runTest {
+        // The archive contains a.bin and extra.txt, but the bundle
+        // declares sub/b.bin too (which is not present in the
+        // archive); the downloader must report that explicitly.
+        val aBytes = ByteArray(1_000) { (it % 251).toByte() }
+        val extraBytes = ByteArray(50) { (it % 251).toByte() }
+        val archive = buildTarBz2(
+            rootDir = "root",
+            entries = listOf("root/a.bin", "root/extra.txt"),
+            payloads = listOf(aBytes, extraBytes)
+        )
+        server.enqueue(MockResponse().setBody(Buffer().write(archive)))
+
+        val bundle = ModelBundle(
+            id = "npu",
+            displayName = "NPU model",
+            kind = ModelKind.ASR,
+            language = "en",
+            files = listOf(
+                ModelFile("a.bin", "", aBytes.size.toLong()),
+                ModelFile("sub/b.bin", "", 500L)
+            ),
+            archive = ModelArchive(
+                url = server.url("/npu.tar.bz2").toString(),
+                sizeBytes = archive.size.toLong(),
+                rootDir = "root"
+            )
+        )
+
+        val ex = assertThrows(ModelDownloadException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                downloader.download(listOf(bundle)).toList()
+            }
+        }
+        assertEquals("Archive is missing sub/b.bin", ex.message)
+    }
+
+    @Test
+    fun archiveBundle_entrySizeMismatch_throwsSizeMismatch() = runTest {
+        // a.bin in the archive is 1000 bytes, but the bundle
+        // declares 999 bytes; the size check must catch it.
+        val aBytes = ByteArray(1_000) { (it % 251).toByte() }
+        val bBytes = ByteArray(500) { ((it + 50) % 251).toByte() }
+        val archive = buildTarBz2(
+            rootDir = "root",
+            entries = listOf("root/a.bin", "root/sub/b.bin"),
+            payloads = listOf(aBytes, bBytes)
+        )
+        server.enqueue(MockResponse().setBody(Buffer().write(archive)))
+
+        val bundle = ModelBundle(
+            id = "npu",
+            displayName = "NPU model",
+            kind = ModelKind.ASR,
+            language = "en",
+            files = listOf(
+                ModelFile("a.bin", "", 999L),
+                ModelFile("sub/b.bin", "", bBytes.size.toLong())
+            ),
+            archive = ModelArchive(
+                url = server.url("/npu.tar.bz2").toString(),
+                sizeBytes = archive.size.toLong(),
+                rootDir = "root"
+            )
+        )
+
+        val ex = assertThrows(ModelDownloadException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                downloader.download(listOf(bundle)).toList()
+            }
+        }
+        assertTrue(
+            "message '${ex.message}' should start with 'Size mismatch'",
+            ex.message?.startsWith("Size mismatch") == true
+        )
+    }
+
+    @Test
+    fun archiveOnlyDownload_lastProgressHasBytesDoneEqualsBytesTotal() = runTest {
+        val aBytes = ByteArray(1_000) { (it % 251).toByte() }
+        val bBytes = ByteArray(500) { ((it + 50) % 251).toByte() }
+        val archive = buildTarBz2(
+            rootDir = "root",
+            entries = listOf("root/a.bin", "root/sub/b.bin"),
+            payloads = listOf(aBytes, bBytes)
+        )
+        server.enqueue(MockResponse().setBody(Buffer().write(archive)))
+
+        val bundle = ModelBundle(
+            id = "npu",
+            displayName = "NPU model",
+            kind = ModelKind.ASR,
+            language = "en",
+            files = listOf(
+                ModelFile("a.bin", "", aBytes.size.toLong()),
+                ModelFile("sub/b.bin", "", bBytes.size.toLong())
+            ),
+            archive = ModelArchive(
+                url = server.url("/npu.tar.bz2").toString(),
+                sizeBytes = archive.size.toLong(),
+                rootDir = "root"
+            )
+        )
+
+        val events = downloader.download(listOf(bundle)).toList()
+
+        // Last event is Completed, the previous one is the trailing
+        // progress with bytesDone == bytesTotal == archive length.
+        assertEquals(DownloadEvent.Completed, events.last())
+        val lastProgress = events.dropLast(1).filterIsInstance<DownloadEvent.Progress>().last()
+        assertEquals(archive.size.toLong(), lastProgress.bytesDone)
+        assertEquals(archive.size.toLong(), lastProgress.bytesTotal)
     }
 }

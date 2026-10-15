@@ -41,7 +41,7 @@ class ModelSetupViewModel(
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(
-        SetupUiState(totalBytes = store.missing(bundles).sumOf { it.totalBytes })
+        SetupUiState(totalBytes = store.missing(bundles).sumOf { it.downloadBytes })
     )
     val state: StateFlow<SetupUiState> = _state.asStateFlow()
 

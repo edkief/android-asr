@@ -2,6 +2,66 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-14 — Archive (tar.bz2) model downloads with streaming extraction
+
+Added Apache Commons Compress 1.27.1 to `gradle/libs.versions.toml`
+(`commonsCompress = "1.27.1"`, library entry `commons-compress`) and
+`implementation(libs.commons.compress)` in `app/build.gradle.kts`.
+
+Extended `models/ModelCatalog.kt`: new `data class ModelArchive(val url,
+val sizeBytes, val rootDir)` and a `val archive: ModelArchive? = null`
+parameter on `ModelBundle`. Added `val downloadBytes: Long` to
+`ModelBundle` so the progress denominator is the upstream archive size
+for archive bundles (and `totalBytes` otherwise).
+
+Rewrote the archive path of `ModelDownloader.download`:
+`bytesTotal = sum of bundle.downloadBytes` (archive bundles contribute
+their `sizeBytes`, plain bundles the sum of their `files` sizes).
+Already-installed archive bundles are skipped without HTTP.
+For not-installed archive bundles: GET the archive URL, surface
+`HTTP <code> for <rootDir>` on non-2xx, wrap the body in a small
+counting `FilterInputStream` (compressed-bytes reporter for the
+progress bar) and decode via
+`TarArchiveInputStream(BZip2CompressorInputStream(BufferedInputStream(counting, 65536)))`.
+For each entry, strip a leading `./` then the archive's `rootDir + "/"`;
+if the rest equals a listed `ModelFile.fileName`, write the entry to
+`<target>.part`, verify `entryBytes == listed.sizeBytes` (`Size mismatch
+for <fileName>: expected X, got Y`) and rename; any other entry is
+skipped. After the loop, throw `ModelDownloadException("Archive is
+missing <fileName>")` for any listed file that wasn't written. The
+final progress event's `bytesDone` equals `bytesTotal` because the
+outer loop updates `bytesDone` by `archive.sizeBytes` after
+`downloadArchive` returns and emits a trailing Progress with the new
+running total.
+
+`ModelSetupViewModel` now totals bytes via
+`store.missing(bundles).sumOf { it.downloadBytes }` so the UI's
+progress denominator matches the wire bytes for the NPU path too.
+
+Added a `buildTarBz2(rootDir, entries, payloads)` helper to
+`models/ModelDownloaderTest.kt` and four new tests:
+- `archiveBundle_withFilesAndExtra_extractsListedFiles_andSkipsExtra`:
+  bundle files `a.bin` (1000) + `sub/b.bin` (500) inside an archive
+  that also carries `extra.txt`; both listed files land at exact
+  sizes, `extra.txt` is not written, no `.part` files survive, last
+  event is `Completed`, server saw exactly one request.
+- `archiveBundle_missingListedFile_throwsArchiveIsMissing`: bundle
+  lists `sub/b.bin` but the archive only has `a.bin` and `extra.txt`;
+  assertion is the exact message `Archive is missing sub/b.bin`.
+- `archiveBundle_entrySizeMismatch_throwsSizeMismatch`: bundle says
+  `a.bin` is 999 bytes but the archive entry is 1000 bytes;
+  exception message starts with `Size mismatch`.
+- `archiveOnlyDownload_lastProgressHasBytesDoneEqualsBytesTotal`: the
+  last Progress event (one before `Completed`) has `bytesDone ==
+  bytesTotal == archive.size.toLong()`.
+
+The pre-existing downloader tests (`twoFiles...`,
+`http404_throwsWithHttpCodeInMessage`,
+`bodyShorterThanSize_throwsSizeMismatch_andDeletesPart`,
+`alreadyInstalledFile_isNotRequested`) still pass. Full verify
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest
+lintDebug assembleDebug` exits 0.
+
 ## 2026-10-15 — TASK-13 — Recording screen with permission flow and live transcript
 
 Added `ui/record/RecordViewModel.kt`: thin ViewModel taking the singleton
