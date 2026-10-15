@@ -1,0 +1,195 @@
+package com.convoscribe.settings
+
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * Unit tests for [SettingsRepository]. Robolectric only because we need
+ * a working [android.content.SharedPreferences]; the API key path uses
+ * [InMemorySecretStore] so we never touch the Android Keystore (which
+ * Robolectric cannot provide).
+ */
+@RunWith(RobolectricTestRunner::class)
+class SettingsRepositoryTest {
+
+    private lateinit var context: Context
+    private lateinit var prefs: android.content.SharedPreferences
+    private lateinit var secrets: InMemorySecretStore
+
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        // A unique prefs file per test so values don't bleed across tests.
+        prefs = context.getSharedPreferences(
+            "settings-test-${System.nanoTime()}",
+            Context.MODE_PRIVATE
+        )
+        secrets = InMemorySecretStore()
+    }
+
+    private fun newRepository(): SettingsRepository = SettingsRepository(prefs, secrets)
+
+    @Test
+    fun defaults_areReturnedOnEmptyPrefs() {
+        val repo = newRepository()
+        val s = repo.settings.value
+        assertEquals("", s.llmBaseUrl)
+        assertEquals("", s.llmModel)
+        assertEquals(24000, s.maxTranscriptChars)
+        assertEquals("en", s.asrLanguage)
+        assertEquals(4, s.numThreads)
+        assertEquals(-1, s.numSpeakers)
+        assertEquals(0.5f, s.clusterThreshold, 0.0001f)
+        assertEquals(0.5f, s.speakerMatchThreshold, 0.0001f)
+    }
+
+    @Test
+    fun update_valuesArePersistedAndReadByANewRepository() {
+        val repo = newRepository()
+        repo.update {
+            it.copy(
+                llmBaseUrl = "https://api.example.com/v1",
+                llmModel = "gpt-4o-mini",
+                maxTranscriptChars = 12345,
+                asrLanguage = "fr",
+                numThreads = 6,
+                numSpeakers = 3,
+                clusterThreshold = 0.7f,
+                speakerMatchThreshold = 0.8f
+            )
+        }
+
+        val fresh = newRepository()
+        val s = fresh.settings.value
+        assertEquals("https://api.example.com/v1", s.llmBaseUrl)
+        assertEquals("gpt-4o-mini", s.llmModel)
+        assertEquals(12345, s.maxTranscriptChars)
+        assertEquals("fr", s.asrLanguage)
+        assertEquals(6, s.numThreads)
+        assertEquals(3, s.numSpeakers)
+        assertEquals(0.7f, s.clusterThreshold, 0.0001f)
+        assertEquals(0.8f, s.speakerMatchThreshold, 0.0001f)
+    }
+
+    @Test
+    fun update_coercesNumericFields() {
+        val repo = newRepository()
+        repo.update {
+            it.copy(
+                maxTranscriptChars = 10,
+                numThreads = 20,
+                numSpeakers = 0,
+                clusterThreshold = 1.5f,
+                speakerMatchThreshold = 0.001f
+            )
+        }
+        val s = repo.settings.value
+        assertEquals(2000, s.maxTranscriptChars)
+        assertEquals(8, s.numThreads)
+        assertEquals(-1, s.numSpeakers)
+        assertEquals(0.95f, s.clusterThreshold, 0.0001f)
+        assertEquals(0.05f, s.speakerMatchThreshold, 0.0001f)
+    }
+
+    @Test
+    fun update_trimsBaseUrlAndStripsTrailingSlash() {
+        val repo = newRepository()
+        repo.update { it.copy(llmBaseUrl = " http://x:8000/v1/ ") }
+        assertEquals("http://x:8000/v1", repo.settings.value.llmBaseUrl)
+    }
+
+    @Test
+    fun update_unsupportedLanguageKeepsPreviousValue() {
+        val repo = newRepository()
+        // First, switch to French so we have a known previous value.
+        repo.update { it.copy(asrLanguage = "fr") }
+        assertEquals("fr", repo.settings.value.asrLanguage)
+
+        // Now try to set German — must keep "fr".
+        repo.update { it.copy(asrLanguage = "de") }
+        assertEquals("fr", repo.settings.value.asrLanguage)
+    }
+
+    @Test
+    fun update_stripsMultipleTrailingSlashesFromBaseUrl() {
+        val repo = newRepository()
+        repo.update { it.copy(llmBaseUrl = "https://example.com/v1///") }
+        // trimEnd removes every trailing '/' in turn.
+        assertEquals("https://example.com/v1", repo.settings.value.llmBaseUrl)
+    }
+
+    @Test
+    fun apiKey_goesThroughSecretStoreAndNotPlainPrefs() {
+        val repo = newRepository()
+        repo.setApiKey("sk-test-12345")
+
+        // The in-memory store has it.
+        assertEquals("sk-test-12345", secrets.getApiKey())
+        assertEquals("sk-test-12345", repo.apiKey())
+
+        // The plain prefs file (used by the rest of the settings)
+        // must not contain the key in any form.
+        val all = prefs.all
+        assertFalse("api key leaked into plain prefs: $all", all.keys.any { it.contains("api", ignoreCase = true) })
+        assertFalse(
+            "api key value leaked into plain prefs: $all",
+            all.values.any { it?.toString()?.contains("sk-test-12345") == true }
+        )
+
+        // A fresh repository built on the same prefs but with a
+        // brand new SecretStore must NOT see the API key — proving
+        // the key is stored exclusively in the SecretStore.
+        val freshSecrets = InMemorySecretStore()
+        val fresh = SettingsRepository(prefs, freshSecrets)
+        assertEquals("", fresh.apiKey())
+    }
+
+    @Test
+    fun apiKey_defaultIsEmptyString() {
+        val repo = newRepository()
+        assertEquals("", repo.apiKey())
+    }
+
+    @Test
+    fun update_clampsLowerBoundsForThresholds() {
+        val repo = newRepository()
+        repo.update {
+            it.copy(
+                clusterThreshold = 0.0f,
+                speakerMatchThreshold = -1.0f
+            )
+        }
+        val s = repo.settings.value
+        assertEquals(0.05f, s.clusterThreshold, 0.0001f)
+        assertEquals(0.05f, s.speakerMatchThreshold, 0.0001f)
+    }
+
+    @Test
+    fun update_numSpeakersNegativeLessThanMinusOneBecomesMinusOne() {
+        val repo = newRepository()
+        repo.update { it.copy(numSpeakers = -42) }
+        assertEquals(-1, repo.settings.value.numSpeakers)
+    }
+
+    @Test
+    fun update_numSpeakersAboveTenClampsToTen() {
+        val repo = newRepository()
+        repo.update { it.copy(numSpeakers = 999) }
+        assertEquals(10, repo.settings.value.numSpeakers)
+    }
+
+    @Test
+    fun settingsFlow_emitsNewValueOnUpdate() {
+        val repo = newRepository()
+        // StateFlow.value reads the latest cached emission without a
+        // collector; no Turbine needed here.
+        repo.update { it.copy(numThreads = 7) }
+        assertEquals(7, repo.settings.value.numThreads)
+    }
+}

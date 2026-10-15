@@ -13,12 +13,13 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val container = (applicationContext as ConvoApp).container
-        // The active language becomes a setting in a later task; for
-        // now we always require English. If every required bundle is
+        // The active language is now a setting; if every required bundle is
         // already on disk we can skip the first-run download screen
         // and go straight to the home screen.
         val startDestination = if (
-            container.modelStore.missing(ModelCatalog.requiredFor("en")).isEmpty()
+            container.modelStore.missing(
+                ModelCatalog.requiredFor(container.settingsRepository.settings.value.asrLanguage)
+            ).isEmpty()
         ) {
             "home"
         } else {

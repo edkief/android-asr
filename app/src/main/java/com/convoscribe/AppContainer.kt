@@ -3,6 +3,8 @@ package com.convoscribe
 import android.content.Context
 import com.convoscribe.models.ModelDownloader
 import com.convoscribe.models.ModelStore
+import com.convoscribe.settings.EncryptedSecretStore
+import com.convoscribe.settings.SettingsRepository
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -37,4 +39,16 @@ class AppContainer(val context: Context) {
      * recognizer and diarizer read from.
      */
     val modelDownloader = ModelDownloader(httpClient, modelStore)
+
+    /**
+     * Persists [com.convoscribe.settings.AppSettings] in
+     * `settings` SharedPreferences and the LLM API key in an
+     * encrypted file. Read by ASR (language, thread count),
+     * diarization (speaker count, thresholds) and the LLM client
+     * (base URL, model, API key).
+     */
+    val settingsRepository = SettingsRepository(
+        prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE),
+        secrets = EncryptedSecretStore(context)
+    )
 }

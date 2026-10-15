@@ -2,6 +2,32 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-7 — Settings repository (prefs + encrypted API key)
+Added `settings/AppSettings.kt` (data class with the documented defaults), `settings/SecretStore.kt`
+declaring `interface SecretStore { getApiKey(); setApiKey(value) }` plus `EncryptedSecretStore`
+(lazy `EncryptedSharedPreferences.create("secrets", AES256_GCM master key,
+PrefKeyEncryptionScheme.AES256_SIV, PrefValueEncryptionScheme.AES256_GCM)`, key `api_key`) and
+`InMemorySecretStore` for tests/previews. `settings/SettingsRepository.kt` exposes
+`val settings: StateFlow<AppSettings>` loaded at construction, `update { transform }` that runs the
+coercions (`maxTranscriptChars` 2000..400000, `numThreads` 1..8, `numSpeakers` -1 or 1..10 with
+0/<-1 collapsed to -1, thresholds 0.05..0.95, `llmBaseUrl` trimmed and trailing `/` stripped,
+`asrLanguage` "en"/"fr" else keeps previous) then writes every field to prefs with `apply()` and
+publishes the result, and `apiKey()`/`setApiKey(value)` delegating to the injected `SecretStore`.
+Wired `AppContainer.settingsRepository = SettingsRepository(
+context.getSharedPreferences("settings", MODE_PRIVATE), EncryptedSecretStore(context))`;
+`MainActivity` now reads
+`container.settingsRepository.settings.value.asrLanguage` instead of the hard-coded "en".
+Added `settings/SettingsRepositoryTest.kt` (Robolectric, `ApplicationProvider`-supplied context,
+unique prefs file per test, `InMemorySecretStore`) covering defaults on empty prefs, full
+round-trip via `update` + fresh repository, every coercion (`numThreads` 20→8,
+`maxTranscriptChars` 10→2000, `numSpeakers` 0→-1 and -42→-1 and 999→10, `clusterThreshold`
+1.5→0.95, `speakerMatchThreshold` 0.001→0.05, baseUrl " http://x:8000/v1/ "→"http://x:8000/v1" and
+trailing "///"→stripped, `asrLanguage` "de" after "fr" keeps "fr"), API key goes through the
+`SecretStore` and never lands in the plain prefs (keys/values scanned), and the StateFlow.value
+updates after `update`. Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0
+(38 unit tests, all pass).
+
 ## 2026-10-15 — TASK-6 — First-run model setup screen and start-destination routing
 Added `interface ModelDownloads { fun download(bundles: List<ModelBundle>): Flow<DownloadEvent> }` in
 `models/ModelDownloader.kt`, with `ModelDownloader` now implementing it (the public
