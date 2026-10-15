@@ -671,3 +671,36 @@ Verify command
 exits 0 (84 unit tests, all pass; ktlint, lint, assembleDebug clean). Sherpa classes are only referenced from
 `com.convoscribe.engine.sherpa.*` and no unit test instantiates them, so the JVM-side `System.loadLibrary("sherpa-onnx-jni")`
 in `OnlineRecognizer`'s static initializer never runs in tests.
+
+## 2026-10-15 — TASK-21: Session detail screen with transcript tab, formatter and share
+
+Added the session-detail screen at `ui/session/SessionScreen.kt` and the supporting
+`data/TranscriptFormatter.kt` + `ui/session/SessionViewModel.kt`. The formatter is a pure object
+(`timestamp(ms)` for `mm:ss` / `h:mm:ss`, `lines(segments, speakers)` resolves labels from the
+matching speaker index, `toText(lines)` produces `[mm:ss] Label: text` or `[mm:ss] text` joined
+by `\n` without merging consecutive same-speaker segments). The ViewModel exposes a single
+`StateFlow<SessionUiState>` built with `flatMapLatest` over the session row + `combine(segments,
+speakers)` (unknown ids short-circuit to `notFound = true`). The screen replaces the previous
+`session/{id}` placeholder: top bar with back + `Icons.Filled.Share` that launches
+`Intent.createChooser(Intent(ACTION_SEND).setType("text/plain")…)`, `PrimaryTabRow` with
+Transcript / Summary / Ask tabs (Summary/Ask render "Coming soon"), a status banner
+("Identifying speakers…" + `LinearProgressIndicator` for DIARIZING; "Speaker detection failed"
+for DIARIZATION_FAILED), a `LazyColumn` of coloured speaker labels (6-entry palette hashed by
+label) and a "No speech was recognised." empty state. Wired the route with
+`navArgument("id") { type = NavType.LongType }`. Added 9 new strings to `strings.xml`.
+
+Tests under `app/src/test/java/com/convoscribe/`:
+* `data/TranscriptFormatterTest` (11 tests): timestamp edge cases (under and past one hour,
+  negative clamp), speaker-label resolution by index, unlabelled segments stay `null`,
+  unresolved speaker index falls back to `null`, `toText` labelled and unlabelled cases,
+  same-speaker lines are not merged, empty-input empties, and a round-trip covering both
+  acceptance examples.
+* `ui/session/SessionViewModelTest` (7 tests, Robolectric + in-memory Room):
+  unknown id → `notFound`, labelled-line resolution, empty-session lines, rename in the DB
+  re-emits `uiState.lines` labels, unlabelled segment surfaces without a speaker label,
+  `transcriptText()` produces the share-ready string, and DIARIZING / DIARIZATION_FAILED
+  status banner inputs.
+
+Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (18 new tests + all pre-existing tests pass, ktlint clean, lintDebug clean, assembleDebug succeeds).
