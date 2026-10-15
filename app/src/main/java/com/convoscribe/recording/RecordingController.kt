@@ -96,10 +96,17 @@ class RecordingController(
         if (_state.value.phase != RecordingPhase.IDLE) return
         // Reset everything we know from a prior session: a fresh
         // start means a fresh error message, a fresh partial/final
-        // list and no lingering "completed" pointer.
+        // list and no lingering "completed" pointer. The
+        // `preparingNpu` flag is sampled from the factory *now*
+        // (before the launched coroutine runs) so the UI gets the
+        // right label even if the NPU first-run compile is slow
+        // enough to be observed.
+        val lang = language()
+        val preparingNpu = transcriberFactory.needsPreparation(lang)
         _state.update {
             RecordingState(
                 phase = RecordingPhase.LOADING,
+                preparingNpu = preparingNpu,
                 lastCompletedSessionId = null,
                 error = null
             )
@@ -114,7 +121,6 @@ class RecordingController(
             var wav: WavWriter? = null
             var sessionId: Long? = null
             try {
-                val lang = language()
                 // Building a streaming transcriber may load a model
                 // from disk and allocate native memory; offload to
                 // the ASR dispatcher so the caller's thread is free.
@@ -136,6 +142,7 @@ class RecordingController(
                 _state.update {
                     it.copy(
                         phase = RecordingPhase.RECORDING,
+                        preparingNpu = false,
                         sessionId = id,
                         elapsedMs = 0L,
                         partialText = "",

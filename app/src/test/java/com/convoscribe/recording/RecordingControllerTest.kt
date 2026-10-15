@@ -150,11 +150,14 @@ class RecordingControllerTest {
      * [TranscriberFactory] returning the supplied transcriber (or
      * throwing if [error] is non-null). Records every call so tests
      * can assert that a second `start` did not build a second
-     * recognizer.
+     * recognizer. [needsPreparation] is a knob so a single test
+     * can exercise both the steady-state LOADING label and the
+     * NPU-first-run path.
      */
     private class FakeTranscriberFactory(
         private val transcriber: StreamingTranscriber,
-        private val error: Throwable? = null
+        private val error: Throwable? = null,
+        private val needsPreparation: Boolean = false
     ) : TranscriberFactory {
         var createCount: Int = 0
             private set
@@ -163,6 +166,7 @@ class RecordingControllerTest {
             if (error != null) throw error
             return transcriber
         }
+        override fun needsPreparation(language: String): Boolean = needsPreparation
     }
 
     /**
@@ -189,10 +193,11 @@ class RecordingControllerTest {
         factoryError: Throwable? = null,
         transcriber: EveryThirdChunkTranscriber = EveryThirdChunkTranscriber(),
         store: FakeRecordingStore = FakeRecordingStore(tmp.root),
-        clock: () -> Long = { 0L }
+        clock: () -> Long = { 0L },
+        needsPreparation: Boolean = false
     ): Harness {
         val audio = ChannelAudioSource(Channel(Channel.UNLIMITED))
-        val factory = FakeTranscriberFactory(transcriber, factoryError)
+        val factory = FakeTranscriberFactory(transcriber, factoryError, needsPreparation)
         val controller = RecordingController(
             audioSource = audio,
             transcriberFactory = factory,
@@ -233,6 +238,58 @@ class RecordingControllerTest {
 
         // Stop the recording cleanly so the launched coroutine ends
         // and runTest does not complain about an open child.
+        h.controller.stop()
+        advanceUntilIdle()
+    }
+
+    /**
+     * When the underlying factory reports `needsPreparation == true`
+     * (the first NPU run that has to compile the `.so` models into
+     * `.bin` context binaries), [RecordingController.start] must
+     * set `preparingNpu == true` together with the LOADING phase
+     * so the recording screen can show the longer "Preparing the
+     * NPU model (first run only, this can take a few minutes)…"
+     * label. The flag is sampled synchronously inside `start`,
+     * before the launched coroutine runs, so the assertion is
+     * valid without advancing the scheduler.
+     */
+    @Test
+    fun start_factoryNeedsPreparation_setsPreparingNpuInLoadingState() = runTest {
+        val h = buildHarness(needsPreparation = true)
+        h.controller.start(this)
+
+        // LOADING + preparingNpu == true, observed synchronously.
+        assertEquals(RecordingPhase.LOADING, h.controller.state.value.phase)
+        assertTrue(
+            "preparingNpu should be true while the NPU first-run compile is in flight",
+            h.controller.state.value.preparingNpu
+        )
+
+        // Once we move into RECORDING the flag is no longer
+        // relevant (the user is past the LOADING window) and is
+        // reset to false by the start() cleanup.
+        advanceUntilIdle()
+        assertEquals(RecordingPhase.RECORDING, h.controller.state.value.phase)
+        assertEquals(false, h.controller.state.value.preparingNpu)
+
+        h.controller.stop()
+        advanceUntilIdle()
+    }
+
+    /**
+     * The default path (CPU engine, or a steady-state NPU that
+     * already has the context binaries on disk) must not flip
+     * `preparingNpu`. This guards against an over-eager override
+     * that would surface a "this can take a few minutes" label on
+     * a normal CPU recording.
+     */
+    @Test
+    fun start_factoryDoesNotNeedPreparation_leavesPreparingNpuFalse() = runTest {
+        val h = buildHarness(needsPreparation = false)
+        h.controller.start(this)
+        assertEquals(RecordingPhase.LOADING, h.controller.state.value.phase)
+        assertEquals(false, h.controller.state.value.preparingNpu)
+        advanceUntilIdle()
         h.controller.stop()
         advanceUntilIdle()
     }

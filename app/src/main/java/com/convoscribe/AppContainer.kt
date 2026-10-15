@@ -92,7 +92,20 @@ class AppContainer(val context: Context) {
      */
     val transcriberFactory: TranscriberFactory = SherpaTranscriberFactory(
         store = modelStore,
-        settings = settingsRepository
+        settings = settingsRepository,
+        // `nativeLibraryDir` is the absolute path the Android
+        // runtime exposes for the app's packaged `.so` files (e.g.
+        // `/data/app/~~XYZ/convoscribe-/lib/arm64-v8a`). The sherpa
+        // factory forwards it to `QnnRuntime.ensurePrepared` so the
+        // Hexagon DSP libraries can `dlopen` each other on the
+        // first NPU build; the CPU engine never reads it.
+        //
+        // Robolectric leaves `ApplicationInfo.nativeLibraryDir` null
+        // because the test process is not a packaged APK; in that
+        // case we hand the factory a sentinel empty string. The
+        // CPU recognizer is what every test fixture instantiates, so
+        // the value is never used and the failure is benign.
+        nativeLibraryDir = context.applicationInfo.nativeLibraryDir ?: ""
     )
 
     /**

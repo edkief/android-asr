@@ -26,6 +26,12 @@ enum class RecordingPhase { IDLE, LOADING, RECORDING, STOPPING }
  * structural equality (`!==`) to decide whether to redraw.
  *
  * @property phase current lifecycle stage (see [RecordingPhase]).
+ * @property preparingNpu `true` when the LOADING window is being
+ *   spent pre-compiling the NPU context binaries (first NPU run
+ *   on a device, or after the on-disk `.bin` files were wiped).
+ *   The recording screen uses this flag to swap the LOADING label
+ *   for a "this can take a few minutes" message; it is `false` for
+ *   the steady state and for the CPU engine.
  * @property sessionId id of the row in Room for the *active*
  *   session, or `null` while idle. Cleared once the session has
  *   finished and the UI has acknowledged it via
@@ -49,6 +55,7 @@ enum class RecordingPhase { IDLE, LOADING, RECORDING, STOPPING }
  */
 data class RecordingState(
     val phase: RecordingPhase = RecordingPhase.IDLE,
+    val preparingNpu: Boolean = false,
     val sessionId: Long? = null,
     val elapsedMs: Long = 0L,
     val partialText: String = "",

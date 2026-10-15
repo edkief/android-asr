@@ -2,6 +2,87 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-16 — QNN (NPU) recognizer backend and engine-aware transcriber factory
+
+Added `engine/sherpa/SherpaAsrConfigs.kt` with `endpoint: EndpointConfig`
+(rule1=2.4s trailing silence, rule2=0.8s after non-silence, rule3=20s
+hard cap) and two builders:
+
+* `cpu(modelDir, asr, numThreads): OnlineRecognizerConfig` — moved
+  the body that used to live in `SherpaRecognizerBackend`'s `init`
+  block here so both engines share the same FeatureConfig and
+  endpoint rules. Provider `"cpu"`, modelType from `asr.modelType`
+  (typically `"zipformer2"`), numThreads forwarded.
+* `npu(modelDir, asr): OnlineRecognizerConfig` — provider `"qnn"`,
+  numThreads `1` (QNN does its own dispatch on Hexagon cores),
+  `modelType = asr.modelType` (`"nemo_transducer"` for the Nemotron
+  bundle), `qnnConfig = QnnConfig(backendLib = "libQnnHtp.so",
+  systemLib = "libQnnSystem.so", contextBinary = contextBinaries(modelDir).joinToString(","))`.
+* `contextBinaries(modelDir): List<File> = listOf(encoder.bin,
+  decoder.bin, joiner.bin)`. QNN writes these on first run and
+  reuses them on subsequent starts.
+
+`SherpaRecognizerBackend` now takes a single `config:
+OnlineRecognizerConfig` instead of building one in its init block
+— the engine-specific bits moved into the two configs above.
+
+`engine/sherpa/QnnRuntime.kt` exposes `ensurePrepared(nativeLibraryDir)`:
+a `@Volatile prepared: Boolean` flag behind a class-level `synchronized`
+lock guards a single `OnlineRecognizer.prependAdspLibraryPath(nativeLibraryDir)`
+call per process. `SherpaTranscriberFactory`'s constructor gained
+`nativeLibraryDir: String`; `AppContainer` passes
+`context.applicationInfo.nativeLibraryDir` (with a `?: ""` fallback
+so Robolectric's null `ApplicationInfo` does not break the existing
+`SettingsRepositoryTest` suite).
+
+`asr/TranscriberFactory.kt` got a default method `fun
+needsPreparation(language: String): Boolean = false`. The sherpa
+implementation overrides it: returns `true` when the effective
+engine is `npu` and any of
+`SherpaAsrConfigs.contextBinaries(bundleDir)` is missing on disk
+(the on-device compile of `.so` → `.bin` is still to be done).
+
+`SherpaTranscriberFactory.create` now: builds the bundle via
+`ModelCatalog.asrFor(language, engine)`, refuses to run if the
+bundle isn't installed, then branches on the effective engine.
+NPU: `QnnRuntime.ensurePrepared(nativeLibraryDir)` and try-catch
+around `SherpaRecognizerBackend(config = SherpaAsrConfigs.npu(...))`;
+any throwable from the recognizer construction is rewrapped as
+`IllegalStateException("The NPU engine failed to start
+(${e.message}). You can switch to the CPU engine in Settings.", e)`.
+The CPU path builds `SherpaAsrConfigs.cpu(...)` with the user's
+`numThreads` and otherwise unchanged. The temporary
+`"NPU engine not available yet"` error is gone.
+
+`RecordingState` gained `val preparingNpu: Boolean = false`
+(doc-commented for the UI). `RecordingController.start` samples
+`transcriberFactory.needsPreparation(language())` synchronously
+before launching the session coroutine and puts both flags in the
+LOADING state together; the transition to RECORDING also clears
+`preparingNpu` so a stray flag never leaks past the LOADING
+window. `RecordBody` takes a new `preparingNpu: Boolean`
+parameter and swaps the LOADING label between
+`R.string.record_phase_loading` ("Loading speech model…") and
+`R.string.record_phase_preparing_npu` ("Preparing the NPU model
+(first run only, this can take a few minutes)…"). New string
+resource added to `values/strings.xml`.
+
+Tests: new `engine/sherpa/SherpaAsrConfigsTest.kt` (TemporaryFolder
+fixture) — `cpu_providerAndThreadCountAndModelType`,
+`npu_providerModelTypeAndQnnConfig`,
+`contextBinaries_returnsAllThreeAbsoluteBinFiles`,
+`npu_forcesOneThread`. `RecordingControllerTest` gained a
+`needsPreparation` knob on the fake factory and two tests:
+`start_factoryNeedsPreparation_setsPreparingNpuInLoadingState`
+(LOADING + `preparingNpu == true`, then cleared on RECORDING)
+and `start_factoryDoesNotNeedPreparation_leavesPreparingNpuFalse`
+(steady-state CPU path stays `false`).
+
+`grep -rn prependAdspLibraryPath app/src/main` shows exactly one
+hit (the call site in `QnnRuntime.kt`). `source scripts/env.sh &&
+./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (120 tests, 0 failures, lintDebug clean).
+
 ## 2026-10-15 — TASK-15 — NPU model bundle (Nemotron EN, QNN) and user-selectable speech engine setting
 
 Added `ASR_EN_NPU` to `models/ModelCatalog.kt`:

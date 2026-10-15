@@ -12,40 +12,89 @@ import com.convoscribe.settings.SettingsRepository
  * matching ASR bundle from [ModelCatalog.asrFor] using the user's
  * selected language and engine, refuses to build a transcriber if
  * the files aren't on disk yet and forwards the user's
- * [SettingsRepository.settings] thread count to the recognizer.
+ * [SettingsRepository.settings] thread count to the CPU
+ * recognizer.
  *
- * The NPU bundle is not yet wired to a real backend (TASK-16/17
- * own the QNN runtime path); when the user has selected the NPU
- * engine, [create] throws [IllegalStateException] so a missing
- * implementation cannot silently fall back to CPU. Callers that do
- * not want a crash must first check `bundle.id` (or just call
- * [ModelCatalog.asrFor] themselves) and reject npu up front.
+ * The factory also owns the QNN runtime preparation: the first
+ * NPU recognizer in this process triggers [QnnRuntime.ensurePrepared]
+ * so the Hexagon DSP libraries can find `libcdsprpc.so` and the
+ * other native libraries bundled with the app. If the QNN
+ * recognizer then fails to instantiate (e.g. missing context
+ * binaries, mismatched HTP backend version, the device not
+ * exposing an NPU), the original exception is rethrown as a
+ * user-facing [IllegalStateException] with a hint to switch to
+ * the CPU engine in Settings.
  *
  * Every call to [create] returns a fresh recognizer + stream pair
  * — sherpa-onnx does not safely share them across sessions.
  */
 class SherpaTranscriberFactory(
     private val store: ModelStore,
-    private val settings: SettingsRepository
+    private val settings: SettingsRepository,
+    /**
+     * Absolute path of the app's `nativeLibraryDir` (e.g.
+     * `/data/app/~~XYZ/convoscribe-/lib/arm64-v8a`). Forwarded
+     * to [QnnRuntime.ensurePrepared] the first time we build an
+     * NPU recognizer so the Hexagon DSP libraries can resolve
+     * each other through `dlopen`. The CPU engine never reads
+     * this value.
+     */
+    private val nativeLibraryDir: String
 ) : TranscriberFactory {
 
     override fun create(language: String): StreamingTranscriber {
         val engine = settings.settings.value.asrEngine
         val bundle = ModelCatalog.asrFor(language, engine)
         val effective = ModelCatalog.effectiveEngine(language, engine)
-        if (effective == "npu") {
-            throw IllegalStateException("NPU engine not available yet")
-        }
         val asr = bundle.asr ?: error("ASR bundle ${bundle.id} has no AsrFiles")
         if (!store.isInstalled(bundle)) {
             throw IllegalStateException("Model not installed: ${bundle.id}")
         }
-        val numThreads = settings.settings.value.numThreads
-        val backend = SherpaRecognizerBackend(
-            modelDir = store.bundleDir(bundle),
-            asr = asr,
-            numThreads = numThreads
-        )
-        return EndpointSegmenter(backend = backend)
+        val modelDir = store.bundleDir(bundle)
+        return if (effective == "npu") {
+            // NPU: make sure the ADSP loader knows about the app's
+            // native library directory, then ask sherpa to build a
+            // QNN-backed recognizer. Any failure during construction
+            // is surfaced verbatim so the user sees the engine-
+            // specific message and the call to switch to CPU in
+            // Settings; we never silently fall back to the CPU
+            // engine because the user chose NPU explicitly.
+            QnnRuntime.ensurePrepared(nativeLibraryDir)
+            val backend = try {
+                SherpaRecognizerBackend(config = SherpaAsrConfigs.npu(modelDir, asr))
+            } catch (e: Throwable) {
+                throw IllegalStateException(
+                    "The NPU engine failed to start (${e.message}). " +
+                        "You can switch to the CPU engine in Settings.",
+                    e
+                )
+            }
+            EndpointSegmenter(backend = backend)
+        } else {
+            val numThreads = settings.settings.value.numThreads
+            val backend = SherpaRecognizerBackend(
+                config = SherpaAsrConfigs.cpu(modelDir, asr, numThreads)
+            )
+            EndpointSegmenter(backend = backend)
+        }
+    }
+
+    /**
+     * `true` when the next [create] for [language] will spin up
+     * the QNN runtime against an NPU bundle that has not been
+     * pre-compiled yet — i.e. the on-device compile of the
+     * `.so` models into `.bin` context binaries is still to be
+     * done. The CPU path is always `false`. The recording screen
+     * reads this to swap the LOADING label from "Loading speech
+     * model…" to a longer message explaining the multi-minute
+     * first-run cost.
+     */
+    override fun needsPreparation(language: String): Boolean {
+        val engine = settings.settings.value.asrEngine
+        val effective = ModelCatalog.effectiveEngine(language, engine)
+        if (effective != "npu") return false
+        val bundle = ModelCatalog.asrFor(language, engine)
+        val modelDir = store.bundleDir(bundle)
+        return SherpaAsrConfigs.contextBinaries(modelDir).any { !it.exists() }
     }
 }

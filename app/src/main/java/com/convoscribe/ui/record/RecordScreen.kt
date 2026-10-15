@@ -154,6 +154,7 @@ fun RecordScreen(navController: NavHostController) {
 
     RecordBody(
         phase = state.phase,
+        preparingNpu = state.preparingNpu,
         elapsedMs = state.elapsedMs,
         finalLines = state.finalLines,
         partialText = state.partialText,
@@ -201,6 +202,7 @@ fun RecordScreen(navController: NavHostController) {
 @Composable
 internal fun RecordBody(
     phase: RecordingPhase,
+    preparingNpu: Boolean,
     elapsedMs: Long,
     finalLines: List<String>,
     partialText: String,
@@ -241,11 +243,19 @@ internal fun RecordBody(
             )
 
             // Phase label: blank while IDLE, "Loading speech model…"
-            // during the brief LOADING window, "Finishing…" during
-            // STOPPING. Keeping this off the IDLE branch keeps the
-            // home/start view visually quiet.
+            // during the brief LOADING window (or the longer
+            // "Preparing the NPU model…" message on the first NPU
+            // run), "Finishing…" during STOPPING. Keeping this off
+            // the IDLE branch keeps the home/start view visually
+            // quiet.
             val phaseLabel = when (phase) {
-                RecordingPhase.LOADING -> stringResource(R.string.record_phase_loading)
+                RecordingPhase.LOADING -> stringResource(
+                    if (preparingNpu) {
+                        R.string.record_phase_preparing_npu
+                    } else {
+                        R.string.record_phase_loading
+                    }
+                )
                 RecordingPhase.STOPPING -> stringResource(R.string.record_phase_stopping)
                 RecordingPhase.IDLE, RecordingPhase.RECORDING -> null
             }
