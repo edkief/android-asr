@@ -163,7 +163,7 @@ fun EngineCheckScreen(navController: androidx.navigation.NavHostController) {
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
-                Row(
+                CheckButtons(
                     button1Enabled = state.runningEngine == null,
                     button2Enabled = state.runningEngine == null,
                     onCheckNpu = { vm.runCheck("npu") },
@@ -194,7 +194,12 @@ fun EngineCheckScreen(navController: androidx.navigation.NavHostController) {
  * screen.
  */
 @Composable
-private fun Row(button1Enabled: Boolean, button2Enabled: Boolean, onCheckNpu: () -> Unit, onCheckCpu: () -> Unit) {
+private fun CheckButtons(
+    button1Enabled: Boolean,
+    button2Enabled: Boolean,
+    onCheckNpu: () -> Unit,
+    onCheckCpu: () -> Unit
+) {
     androidx.compose.foundation.layout.Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
