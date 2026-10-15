@@ -133,3 +133,13 @@ echo "  JAVA_HOME=$JDK_DIR"
 echo "  Gradle  : $GRADLE_DIR"
 echo "  SDK root: $ANDROID_HOME"
 echo "  NDK     : $ANDROID_HOME/ndk/${ANDROID_NDK_VERSION}"
+
+# sherpa-onnx 1.13.8 native libraries (Qualcomm QNN + speaker diarization
+# enabled) and the Kotlin API jar. This is a no-op on a re-run; pass
+# --force to rebuild from scratch. The build takes 10-30 minutes.
+SHERPA_BUILD_SCRIPT="$(cd "$(dirname "$0")" && pwd)/build-sherpa-onnx.sh"
+if [[ -x "$SHERPA_BUILD_SCRIPT" ]]; then
+  bash "$SHERPA_BUILD_SCRIPT"
+else
+  echo "WARNING: sherpa-onnx build script not found at $SHERPA_BUILD_SCRIPT; skipping." >&2
+fi

@@ -7,6 +7,14 @@ plugins {
     alias(libs.plugins.ktlint)
 }
 
+// sherpa-onnx 1.13.8 native + Kotlin API. Both are built by
+// `scripts/build-sherpa-onnx.sh` into these paths and are .gitignore'd.
+val sherpaJar = file("libs/sherpa-onnx-classes-1.13.8.jar")
+val sherpaJni = file("src/main/jniLibs/arm64-v8a/libsherpa-onnx-jni.so")
+check(sherpaJar.exists() && sherpaJni.exists()) {
+    "Missing sherpa-onnx native build - run bash scripts/build-sherpa-onnx.sh"
+}
+
 android {
     namespace = "com.convoscribe"
     compileSdk = 35
@@ -17,11 +25,18 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
@@ -55,6 +70,7 @@ android {
 }
 
 dependencies {
+    implementation(files(sherpaJar))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)

@@ -8,5 +8,7 @@ local.properties
 .idea/
 *.iml
 .kotlin/
+app/libs/*.jar
 app/libs/*.aar
+app/src/main/jniLibs/
 captures/
