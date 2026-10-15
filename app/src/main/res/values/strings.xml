@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ConvoScribe</string>
+    <string name="setup_title">Download speech models</string>
+    <string name="setup_body">About %1$d MB will be downloaded once and stored on this device.</string>
+    <string name="setup_progress">%1$d MB / %2$d MB</string>
+    <string name="setup_download">Download</string>
+    <string name="setup_retry">Retry</string>
 </resources>

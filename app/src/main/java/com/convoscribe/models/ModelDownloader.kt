@@ -46,10 +46,20 @@ sealed interface DownloadEvent {
  * hard failure and the partial file is removed so the next run
  * re-downloads it.
  */
+/**
+ * Indirection over [ModelDownloader] so the ViewModel layer can be
+ * unit-tested with a fake without reaching for OkHttp's MockWebServer.
+ * The production implementation is [ModelDownloader]; the interface
+ * stays tiny so test fakes are short.
+ */
+interface ModelDownloads {
+    fun download(bundles: List<ModelBundle>): Flow<DownloadEvent>
+}
+
 class ModelDownloader(
     private val client: OkHttpClient,
     private val store: ModelStore
-) {
+) : ModelDownloads {
 
     /**
      * Fetch every file in [bundles], in input order, then emit
@@ -59,7 +69,7 @@ class ModelDownloader(
      * the copy loop, so [Flow.collect] on a cancelled scope tears down
      * the in-flight request.
      */
-    fun download(bundles: List<ModelBundle>): Flow<DownloadEvent> = flow {
+    override fun download(bundles: List<ModelBundle>): Flow<DownloadEvent> = flow {
         val bytesTotal = bundles.sumOf { bundle -> bundle.totalBytes }
         var bytesDone = 0L
         for (bundle in bundles) {

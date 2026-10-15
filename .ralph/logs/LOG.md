@@ -2,6 +2,37 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-6 — First-run model setup screen and start-destination routing
+Added `interface ModelDownloads { fun download(bundles: List<ModelBundle>): Flow<DownloadEvent> }` in
+`models/ModelDownloader.kt`, with `ModelDownloader` now implementing it (the public
+`download(...)` method picked up an `override`). Created
+`ui/setup/ModelSetupViewModel.kt` exposing `data class SetupUiState(totalBytes, doneBytes, running,
+error, finished)` as a `StateFlow`; `start()` is idempotent while running, collects
+`downloader.download(store.missing(bundles))`, maps `Progress` → updated `doneBytes`, maps
+`Completed` → `finished=true, running=false, doneBytes=totalBytes`, and catches
+`ModelDownloadException` into `error` with `running=false` (so a retry is a normal
+`start()` again). Created `ui/setup/ModelSetupScreen.kt` reading from
+`(LocalContext.current.applicationContext as ConvoApp).container` via
+`viewModel(factory = viewModelFactory { initializer { ... } })`; renders the title, an
+"About N MB will be downloaded..." body, a `LinearProgressIndicator(progress = { done/total })`
+and "x MB / y MB" while running, and a `Download` button (idle) or `Retry` button (error, with the
+error text in `MaterialTheme.colorScheme.error`). A `LaunchedEffect(state.finished)`
+invokes `onFinished()` once. `ui/AppNavHost.kt` now takes a `startDestination: String = "home"`
+parameter and adds a `setup` route whose `onFinished` navigates to `home` with
+`popUpTo("setup") { inclusive = true }`. `MainActivity.onCreate` computes
+`if (container.modelStore.missing(ModelCatalog.requiredFor("en")).isEmpty()) "home" else "setup"`
+(the language becomes a setting in a later task). Added strings
+`setup_title`/`setup_body`/`setup_progress`/`setup_download`/`setup_retry` to
+`res/values/strings.xml`. Wrote `ui/setup/ModelSetupViewModelTest.kt` with
+`Dispatchers.setMain(StandardTestDispatcher())` in `@Before` and `resetMain()` in `@After`, using
+Turbine to collect the StateFlow and a `RecordingDownloads` fake to count `download(...)` calls.
+Three tests cover: (a) Progress(50,100) then Completed → intermediate `doneBytes == 50`, final
+`finished == true`/`running == false`; (b) `ModelDownloadException("HTTP 500 for x")` → error
+set, second `start()` clears the error and runs again; (c) `start()` called twice while
+running only invokes the downloader once. Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (26 unit tests, all pass; APK builds).
+
 ## 2026-10-15 — TASK-5 — Model downloader with progress, size verification and atomic rename
 Added `<uses-permission android:name="android.permission.INTERNET" />` to `AndroidManifest.xml`,
 created `models/ModelDownloader.kt` with `sealed interface DownloadEvent { Progress(bytesDone,
