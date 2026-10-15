@@ -1,23 +1,21 @@
 {
   "id": "TASK-26",
-  "title": "v2: enrolled speakers table (DB v2 auto-migration) and embedding math",
-  "category": "functional",
-  "description": "Start v2 speaker enrollment (PRD goal 5): store named voice embeddings and provide cosine-similarity matching, without breaking existing user data.",
+  "title": "Summary tab: stream, save and regenerate the summary",
+  "category": "ui",
+  "description": "Summarise the session through the LLM, showing tokens as they arrive, and save the result with the session (goal 4).",
   "steps": [
-    "Create `data/EnrolledSpeakerEntity.kt`: table `enrolled_speakers`, `(@PrimaryKey(autoGenerate = true) id: Long = 0, name: String, embedding: ByteArray, createdAt: Long)` with a unique index on `name`. Add converters in `data/EmbeddingCodec.kt`: `fun FloatArray.toBytes(): ByteArray` / `fun ByteArray.toFloats(): FloatArray` (little-endian float32 via ByteBuffer).",
-    "Create `EnrolledSpeakerDao`: `observeAll(): Flow<List<EnrolledSpeakerEntity>>` (by name), `getAll()`, `upsertByName` implemented as `@Insert(onConflict = REPLACE)`, `delete(id)`.",
-    "Bump `AppDatabase` to `version = 2` with `autoMigrations = [AutoMigration(from = 1, to = 2)]`, add the entity and DAO. Commit `app/schemas/com.convoscribe.data.AppDatabase/2.json`.",
-    "Create `diarization/SpeakerMatcher.kt`: `object SpeakerMatcher { fun cosine(a: FloatArray, b: FloatArray): Float` (0f if either norm is 0; require equal sizes) `; data class Enrolled(val name: String, val embedding: FloatArray); fun assignNames(embeddings: Map<Int, FloatArray>, enrolled: List<Enrolled>, threshold: Float): Map<Int, String> }`. `assignNames`: compute all (speakerIndex, enrolled) scores ≥ threshold, sort by score desc, assign greedily so each speaker index and each enrolled name is used at most once.",
-    "Create `data/EnrolledSpeakerStore.kt`: `interface EnrolledSpeakerStore { fun observeAll(): Flow<List<EnrolledSpeakerEntity>>; suspend fun getAll(): List<SpeakerMatcher.Enrolled>; suspend fun save(name: String, embedding: FloatArray); suspend fun delete(id: Long) }` and `class EnrolledSpeakerRepository(dao: EnrolledSpeakerDao) : EnrolledSpeakerStore`. Add `val enrolledSpeakers: EnrolledSpeakerStore = EnrolledSpeakerRepository(database.enrolledSpeakerDao())` to `AppContainer`. Later tasks depend on the interface only.",
-    "Write `diarization/SpeakerMatcherTest.kt`, `data/EmbeddingCodecTest.kt` and `data/EnrolledSpeakerRepositoryTest.kt` (Robolectric, in-memory DB)."
+    "In `SessionRepository` add `observeMessages(sessionId, kind): Flow<List<ChatMessageEntity>>`, `addMessage(sessionId, kind, role, content): Long`, `clearMessages(sessionId, kind)`.",
+    "Create `ui/session/SummaryViewModel.kt`: constructor `(sessionId: Long, repository: SessionRepository, chatClient: ChatClient, settings: SettingsRepository)`. State `data class SummaryUiState(val saved: String? = null, val streaming: String = \"\", val running: Boolean = false, val error: String? = null, val configured: Boolean = true)`. `saved` = content of the latest ASSISTANT SUMMARY message. `configured` = baseUrl and model not blank. `fun summarise()`: ignore if running; build the transcript text with `TranscriptFormatter` from the repository's segments/speakers; if blank set error \"The transcript is empty.\"; else collect `chatClient.stream(PromptBuilder.summary(text, maxChars))` appending to `streaming`; on completion `clearMessages(SUMMARY)` then `addMessage(SUMMARY, ASSISTANT, full)`, reset streaming/running. On LlmException set `error = message` and keep the old saved summary. `fun cancel()` cancels the job.",
+    "In `SessionScreen` replace the Summary tab placeholder: if not configured, text \"Set up a language model endpoint in Settings.\" + button navigating to `settings`. Else: button \"Summarise\" (or \"Regenerate\" when a summary is saved), while running show the streaming text + a \"Stop\" button + small `CircularProgressIndicator`; show the saved summary in a `SelectionContainer` with `bodyLarge`. Show error in error color with \"Retry\". Add a \"Copy\" `TextButton` using `LocalClipboardManager` (no ContentCopy icon: it is not in material-icons-core). Render the summary as plain text (no markdown library).",
+    "Write `ui/session/SummaryViewModelTest.kt` (Robolectric + in-memory DB + fake ChatClient + `Dispatchers.setMain`)."
   ],
   "acceptanceCriteria": [
-    "`app/schemas/com.convoscribe.data.AppDatabase/2.json` is committed and the build (Room auto-migration validation) passes",
-    "Test: cosine of identical vectors ≈ 1, orthogonal = 0, zero vector = 0",
-    "Test: speakers 0 and 1 score 0.9 and 0.8 against \"Alice\", speaker 1 scores 0.6 against \"Bob\" (build vectors or stub the scores via small 2-D embeddings): threshold 0.5 gives {0: Alice, 1: Bob}; threshold 0.7 gives {0: Alice}",
-    "Test: FloatArray → bytes → FloatArray round-trips exactly",
-    "Test: saving the same name twice keeps one row with the newer embedding",
+    "Test: fake streaming \"A\",\"B\",\"C\" ends with `saved == \"ABC\"`, one SUMMARY message in DB, `running == false`",
+    "Test: regenerate replaces the previous summary (still exactly one SUMMARY message)",
+    "Test: fake throwing LlmException(\"HTTP 500: x\") sets error and keeps the previous saved summary",
+    "Test: empty transcript sets error `The transcript is empty.` and never calls the client",
+    "Test: the messages sent to the fake equal `PromptBuilder.summary(...)` for the session's transcript",
     "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
   ],
-  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` engine classes (OnlineRecognizer, OnlineStream, OfflineSpeakerDiarization, SpeakerEmbeddingExtractor, ...) in unit tests; plain `*Config` data classes are fine. Only reference sherpa classes inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
 }

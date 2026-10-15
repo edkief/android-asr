@@ -1,0 +1,20 @@
+{
+  "id": "TASK-32",
+  "title": "v2: known speakers screen (enroll, list, delete)",
+  "category": "ui",
+  "description": "UI to enroll a person by recording a 15-second voice sample, list enrolled people and delete them (goal 5).",
+  "steps": [
+    "Create `ui/speakers/SpeakersViewModel.kt`: constructor `(repo: EnrolledSpeakerStore, enroll: EnrollSpeakerUseCase)`. State: `speakers` list (name, id), `enrollName`, `phase` (IDLE, RECORDING with progress, PROCESSING), `error`. `fun startEnrollment()` → `record(15_000)` then `enroll(name, samples)`; errors (IllegalArgumentException/IllegalStateException messages) go to `error`. `fun cancel()`, `fun delete(id)`.",
+    "Create `ui/speakers/SpeakersScreen.kt` (route `speakers`): explanation text \"Record about 15 seconds of one person speaking normally. ConvoScribe will then recognise their voice in new recordings.\", name field, \"Record sample\" button (requests RECORD_AUDIO like the record screen), a progress bar with seconds remaining while recording, \"Processing…\" state, and a list of enrolled names each with a delete icon + confirm dialog. If the embedding model is missing, show a button to go to `setup`.",
+    "Add a \"Known speakers\" row in `SettingsScreen` (Speakers section) navigating to `speakers`.",
+    "Write `ui/speakers/SpeakersViewModelTest.kt` with fakes."
+  ],
+  "acceptanceCriteria": [
+    "Test: successful enrollment returns to IDLE, clears the name, and the list contains the new name",
+    "Test: blank name sets error and does not start recording",
+    "Test: `delete(id)` removes the entry",
+    "Route `speakers` is reachable from Settings (visible in `SettingsScreen.kt` and `AppNavHost.kt`)",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` engine classes (OnlineRecognizer, OnlineStream, OfflineSpeakerDiarization, SpeakerEmbeddingExtractor, ...) in unit tests; plain `*Config` data classes are fine. Only reference sherpa classes inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

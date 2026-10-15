@@ -1,0 +1,19 @@
+{
+  "id": "TASK-34",
+  "title": "v2: save a session speaker as a known speaker",
+  "category": "ui",
+  "description": "From a session, turn a detected speaker into an enrolled person using their audio in that recording, so users do not need a separate enrollment recording (goal 5).",
+  "steps": [
+    "Create `diarization/EnrollFromSessionUseCase.kt`: `class EnrollFromSessionUseCase(repository: SessionRepository, embedderFactory: SpeakerEmbedderFactory, store: EnrolledSpeakerStore, readSamples: (File) -> FloatArray = WavReader::readMono16k)`. `suspend fun run(sessionId: Long, speakerIndex: Int, name: String)`: read the WAV, take the session's segments with that speakerIndex, concatenate their audio (segment start/end ms × 16) up to 30 s, require ≥ 3 s (else throw IllegalArgumentException(\"Not enough speech from this speaker (need 3 s)\")), embed, save with `name.trim()`, and also `repository.renameSpeaker(sessionId, speakerIndex, name)`.",
+    "In the speaker rename dialog in `SessionScreen`, add a checkbox \"Remember this voice\". When checked, Save calls a new `SessionViewModel.renameAndRemember(index, name)` that runs the use case and shows errors in a `Snackbar`.",
+    "Wire the use case in `AppContainer` and the `SessionViewModel` factory.",
+    "Write `diarization/EnrollFromSessionUseCaseTest.kt` (Robolectric + in-memory DB, fake embedder, `readSamples` returning a FloatArray of 60 s)."
+  ],
+  "acceptanceCriteria": [
+    "Test: speaker with 5 s of segments is enrolled under the trimmed name and renamed in the session",
+    "Test: speaker with 2 s of segments throws with the message `Not enough speech from this speaker (need 3 s)` and nothing is saved",
+    "Test: audio taken is capped at 30 s (fake embedder records sample count = 480 000)",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` engine classes (OnlineRecognizer, OnlineStream, OfflineSpeakerDiarization, SpeakerEmbeddingExtractor, ...) in unit tests; plain `*Config` data classes are fine. Only reference sherpa classes inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

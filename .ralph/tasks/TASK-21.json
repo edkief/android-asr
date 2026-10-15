@@ -1,23 +1,20 @@
 {
   "id": "TASK-21",
-  "title": "Prompt builder and transcript truncation",
-  "category": "functional",
-  "description": "Build the exact messages sent to the LLM for summaries and questions, fitting long transcripts into a character budget (goal 4).",
+  "title": "Session detail screen: transcript tab, formatter and share",
+  "category": "ui",
+  "description": "Show a session's transcript with timestamps and speaker labels, and share it as text (goals 2, 3). This screen gets Summary and Ask tabs in later tasks.",
   "steps": [
-    "Create `llm/TranscriptTruncator.kt`: `object TranscriptTruncator { fun fit(transcript: String, maxChars: Int): String }`. If length ≤ maxChars return it unchanged. Else keep a head of the first `maxChars / 2` chars and a tail of the last `maxChars / 2 - 80` chars, each cut back to a whole line (head: up to the last `\\n` inside it; tail: from the first `\\n` inside it), joined by `\"\\n[… N characters omitted …]\\n\"` where N = original length - head length - tail length. Result length must be ≤ maxChars.",
-    "Create `llm/PromptBuilder.kt` with constants and functions exactly:",
-    "`SUMMARY_SYSTEM = \"You summarise conversation transcripts. Write in the same language as the transcript. Use this structure:\\n1. Overview: one short paragraph.\\n2. Key points: bullet list.\\n3. Decisions: bullet list, or \\\"None\\\".\\n4. Action items: bullet list with the owner's name when known, or \\\"None\\\".\\nUse the speaker names exactly as they appear. Do not invent facts that are not in the transcript.\"`",
-    "`fun summary(transcript: String, maxChars: Int): List<LlmMessage>` = [system SUMMARY_SYSTEM, user `\"Transcript:\\n\\n\" + TranscriptTruncator.fit(transcript, maxChars)`].",
-    "`QA_SYSTEM_PREFIX = \"You answer questions about the conversation transcript below. Answer only from the transcript; if the answer is not in it, say that it is not in the transcript. Answer in the language of the question. Cite timestamps like [12:34] when useful.\\n\\nTranscript:\\n\"`",
-    "`fun question(transcript: String, maxChars: Int, history: List<LlmMessage>, question: String): List<LlmMessage>` = [system QA_SYSTEM_PREFIX + fitted transcript] + the last 6 messages of `history` (user/assistant only) + user `question.trim()`.",
-    "Write `llm/TranscriptTruncatorTest.kt` and `llm/PromptBuilderTest.kt`."
+    "Create `data/TranscriptFormatter.kt`: `data class TranscriptLine(val startMs: Long, val speaker: String?, val text: String)`, `object TranscriptFormatter { fun timestamp(ms: Long): String; fun lines(segments: List<SegmentEntity>, speakers: List<SpeakerEntity>): List<TranscriptLine>; fun toText(lines: List<TranscriptLine>): String }`. timestamp: `mm:ss`, or `h:mm:ss` ≥ 1 h. lines: speaker label from the SpeakerEntity with matching index, `null` when speakerIndex is null. toText: one line per segment `\"[mm:ss] Label: text\"` or `\"[mm:ss] text\"` without speaker, joined by `\\n`; consecutive lines from the same speaker are NOT merged.",
+    "Create `ui/session/SessionViewModel.kt`: constructor `(sessionId: Long, repository: SessionRepository)`; `val uiState: StateFlow<SessionUiState>` combining `observe(id)`, segments and speakers: `data class SessionUiState(val title: String = \"\", val status: SessionStatus? = null, val lines: List<TranscriptLine> = emptyList(), val speakers: List<SpeakerEntity> = emptyList(), val notFound: Boolean = false)`. `fun transcriptText(): String` = `TranscriptFormatter.toText(uiState.value.lines)`.",
+    "Create `ui/session/SessionScreen.kt` for route `session/{id}` (replace the placeholder; `navArgument(\"id\") { type = NavType.LongType }`). Top bar: title, back arrow, share icon (`Icons.Filled.Share`) launching `Intent.createChooser(Intent(Intent.ACTION_SEND).setType(\"text/plain\").putExtra(Intent.EXTRA_SUBJECT, title).putExtra(Intent.EXTRA_TEXT, transcriptText), null)`. Under it a `PrimaryTabRow` with tabs \"Transcript\", \"Summary\", \"Ask\" (Summary/Ask show \"Coming soon\" for now). Transcript tab: a status banner (\"Identifying speakers…\" with `LinearProgressIndicator` for DIARIZING, \"Speaker detection failed\" for DIARIZATION_FAILED), then a `LazyColumn`: each line shows timestamp + speaker label in `labelMedium` (speaker colored by index from a fixed palette of 6 colors) and the text in `bodyLarge`. Empty transcript: \"No speech was recognised.\"",
+    "Write `data/TranscriptFormatterTest.kt` and `ui/session/SessionViewModelTest.kt` (Robolectric + in-memory DB)."
   ],
   "acceptanceCriteria": [
-    "Test: short transcript returned unchanged",
-    "Test: a 10 000-char transcript of 100-char lines fitted to 2000 is ≤ 2000 chars, contains `characters omitted`, starts with the first line and ends with the last line, and no line is cut mid-way",
-    "Test: `summary` returns 2 messages with roles system,user and the user content starts with `Transcript:`",
-    "Test: `question` with 10 history messages includes only the last 6, and the final message is the trimmed question with role user",
+    "Test: `timestamp(65_000) == \"01:05\"`, `timestamp(3_725_000) == \"1:02:05\"`",
+    "Test: `toText` gives `\"[00:00] Speaker 1: Hello\\n[00:03] Speaker 2: Hi\"` for two labelled segments and `\"[00:00] Hello\"` when unlabelled",
+    "Test: renaming a speaker in the DB updates `uiState.lines` labels (flow re-emits)",
+    "Test: an unknown session id gives `notFound == true`",
     "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
   ],
-  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` engine classes (OnlineRecognizer, OnlineStream, OfflineSpeakerDiarization, SpeakerEmbeddingExtractor, ...) in unit tests; plain `*Config` data classes are fine. Only reference sherpa classes inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
 }

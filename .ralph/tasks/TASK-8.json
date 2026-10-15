@@ -21,5 +21,5 @@
     "`app/schemas/com.convoscribe.data.AppDatabase/1.json` is committed",
     "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
   ],
-  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` engine classes (OnlineRecognizer, OnlineStream, OfflineSpeakerDiarization, SpeakerEmbeddingExtractor, ...) in unit tests; plain `*Config` data classes are fine. Only reference sherpa classes inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
 }

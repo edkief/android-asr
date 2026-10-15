@@ -1,19 +1,20 @@
 {
   "id": "TASK-27",
-  "title": "v2: speaker embedder (sherpa) and enroll-from-audio use case",
-  "category": "functional",
-  "description": "Compute a voice embedding from audio samples with sherpa-onnx's SpeakerEmbeddingExtractor and enroll a named speaker from a recorded sample (goal 5).",
+  "title": "Ask tab: question/answer chat about the transcript",
+  "category": "ui",
+  "description": "Let the user ask questions about the conversation and get streamed answers that use the previous Q&A as context; the history is saved with the session (goal 4).",
   "steps": [
-    "Create `diarization/SpeakerEmbedder.kt`: `interface SpeakerEmbedder : Closeable { fun embed(samples: FloatArray): FloatArray }` and `fun interface SpeakerEmbedderFactory { fun create(): SpeakerEmbedder }`.",
-    "Create `engine/sherpa/SherpaSpeakerEmbedder.kt`: holds `SpeakerEmbeddingExtractor(assetManager = null, config = SpeakerEmbeddingExtractorConfig(model = <abs path of wespeaker_en_voxceleb_resnet34_LM.onnx>, numThreads = n))`. `embed`: `val stream = extractor.createStream(); stream.acceptWaveform(samples, 16000); stream.inputFinished(); check(extractor.isReady(stream)) { \"Audio too short for a voice sample\" }; val e = extractor.compute(stream); stream.release(); return e`. `close()` → `extractor.release()`. Factory `SherpaSpeakerEmbedderFactory(store, settings)` analogous to `SherpaDiarizerFactory` (throws if the EMBEDDING bundle is missing). Add `speakerEmbedderFactory` to `AppContainer`.",
-    "Create `diarization/EnrollSpeakerUseCase.kt`: `class EnrollSpeakerUseCase(private val audioSource: AudioSource, private val embedderFactory: SpeakerEmbedderFactory, private val repo: EnrolledSpeakerStore)`. `suspend fun record(durationMs: Long = 15_000, onProgress: (Float) -> Unit): FloatArray` collects `audioSource.chunks()` until enough samples (16 samples per ms), converting with `toFloatSamples()`. `suspend fun enroll(name: String, samples: FloatArray)`: require name not blank and samples ≥ 3 s (48 000), compute `embedderFactory.create().use { it.embed(samples) }` on `Dispatchers.Default`, `repo.save(name.trim(), embedding)`.",
-    "Write `diarization/EnrollSpeakerUseCaseTest.kt` with a fake AudioSource (emits 1600-sample chunks forever), fake embedder (returns `floatArrayOf(samples.size.toFloat(), 1f)`), and an in-memory fake `EnrolledSpeakerStore`."
+    "Create `ui/session/AskViewModel.kt`: constructor `(sessionId, repository, chatClient, settings)`. State `data class AskUiState(val messages: List<ChatMessageEntity> = emptyList(), val streaming: String = \"\", val running: Boolean = false, val error: String? = null, val configured: Boolean = true)`; messages from `observeMessages(QA)`.",
+    "`fun ask(question: String)`: ignore if blank or running. Save the USER message first. Build the prompt with `PromptBuilder.question(transcript, maxChars, history, question)` where history = the previously saved QA messages (before this question) mapped to `LlmMessage(\"user\"/\"assistant\", content)`. Stream into `streaming`; on completion save the ASSISTANT message. On error set `error` and save nothing for the assistant (the user message stays, so the user can retry with `fun retryLast()` which re-sends the last USER message without saving it again). `fun clearHistory()` clears QA messages.",
+    "In `SessionScreen` replace the Ask tab placeholder: same not-configured state as Summary. Else a `LazyColumn` of chat bubbles (user right-aligned with `primaryContainer`, assistant left with `surfaceVariant`, text selectable), the streaming answer as a live bubble, error with \"Retry\", and a bottom row with an `OutlinedTextField` (\"Ask about this conversation…\", ImeAction.Send) and a send `IconButton`. Overflow item \"Clear questions\" calls `clearHistory()`. Auto-scroll to the bottom when messages change.",
+    "Write `ui/session/AskViewModelTest.kt`."
   ],
   "acceptanceCriteria": [
-    "Test: `record(1000)` returns exactly 16 000 samples (truncate the final chunk) and progress reaches 1.0",
-    "Test: `enroll(\" Alice \", 64 000 samples)` saves name `Alice` with the fake embedding",
-    "Test: `enroll` with 16 000 samples or a blank name throws IllegalArgumentException and saves nothing",
+    "Test: `ask(\"Who decided?\")` with fake streaming \"Bob\" saves USER then ASSISTANT messages in order",
+    "Test: the second question's prompt contains the first Q and A as history (inspect what the fake received)",
+    "Test: on LlmException the USER message is saved, no ASSISTANT message, error set; `retryLast()` succeeds without duplicating the USER message",
+    "Test: blank question does nothing; `clearHistory()` empties messages",
     "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
   ],
-  "notes": "sherpa API (v1.13.8, package `com.k2fsa.sherpa.onnx`): `SpeakerEmbeddingExtractor(assetManager: AssetManager? = null, config)`, `createStream(): OnlineStream`, `isReady(stream)`, `compute(stream): FloatArray`, `dim()`, `release()`; `OnlineStream.acceptWaveform(samples, sampleRate)`, `inputFinished()`, `release()`. | Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` engine classes (OnlineRecognizer, OnlineStream, OfflineSpeakerDiarization, SpeakerEmbeddingExtractor, ...) in unit tests; plain `*Config` data classes are fine. Only reference sherpa classes inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
 }

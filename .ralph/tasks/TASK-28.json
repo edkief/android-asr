@@ -1,20 +1,22 @@
 {
   "id": "TASK-28",
-  "title": "v2: known speakers screen (enroll, list, delete)",
-  "category": "ui",
-  "description": "UI to enroll a person by recording a 15-second voice sample, list enrolled people and delete them (goal 5).",
+  "title": "French transcription: language setting, model download and per-session language",
+  "category": "functional",
+  "description": "Add French as a transcription language (goal 1, multilingual), using the French streaming zipformer already in `ModelCatalog.ASR_FR`.",
   "steps": [
-    "Create `ui/speakers/SpeakersViewModel.kt`: constructor `(repo: EnrolledSpeakerStore, enroll: EnrollSpeakerUseCase)`. State: `speakers` list (name, id), `enrollName`, `phase` (IDLE, RECORDING with progress, PROCESSING), `error`. `fun startEnrollment()` → `record(15_000)` then `enroll(name, samples)`; errors (IllegalArgumentException/IllegalStateException messages) go to `error`. `fun cancel()`, `fun delete(id)`.",
-    "Create `ui/speakers/SpeakersScreen.kt` (route `speakers`): explanation text \"Record about 15 seconds of one person speaking normally. ConvoScribe will then recognise their voice in new recordings.\", name field, \"Record sample\" button (requests RECORD_AUDIO like the record screen), a progress bar with seconds remaining while recording, \"Processing…\" state, and a list of enrolled names each with a delete icon + confirm dialog. If the embedding model is missing, show a button to go to `setup`.",
-    "Add a \"Known speakers\" row in `SettingsScreen` (Speakers section) navigating to `speakers`.",
-    "Write `ui/speakers/SpeakersViewModelTest.kt` with fakes."
+    "In `SettingsScreen` replace the disabled language row with a two-option `SingleChoiceSegmentedButtonRow` \"English\" / \"Français\" bound to `AppSettings.asrLanguage` (\"en\"/\"fr\"), saved immediately via `repo.update`. French has no NPU model: when Français is selected show \"French uses the CPU engine.\" under the engine selector (the engine setting itself is kept; `ModelCatalog.effectiveEngine` already maps French to CPU).",
+    "Make sure `ModelSetupViewModel` takes the bundles from `ModelCatalog.requiredFor(language, engine)` for the current settings (pass them from the factory). `MainActivity` and the home FAB already use the setting's language, so choosing French with its model missing leads to `setup`, which downloads only the missing French bundle (≈71 MB) — update the setup text to show the real size of the missing bundles: `store.missing(bundles).sumOf { it.totalBytes }`.",
+    "In Settings, under the language selector, show the model status for the selected language: \"Model installed\" or \"Model not downloaded (N MB) – it will be downloaded before your next recording\". Add a \"Delete French model\" text button when French is installed and English is selected (calls `modelStore.delete(ModelCatalog.ASR_FR)`).",
+    "`RecordingController` already passes the language to the factory and saves it on the session; show the language code in `sessionSubtitle` as a suffix `\" · FR\"` only when the language is not \"en\" (add a `language` parameter, update its tests).",
+    "Ensure `TextNormalizer` handles French accented upper-case (e.g. \"ÉTÉ\" → \"Été\") — add a test; use `lowercase(Locale.ROOT)`/`replaceFirstChar { it.titlecase(Locale.ROOT) }`.",
+    "Add tests in `ui/setup/ModelSetupViewModelTest.kt` (only missing bundles are requested; totalBytes equals the missing sum) and `ui/home/SessionSubtitleTest.kt`."
   ],
   "acceptanceCriteria": [
-    "Test: successful enrollment returns to IDLE, clears the name, and the list contains the new name",
-    "Test: blank name sets error and does not start recording",
-    "Test: `delete(id)` removes the entry",
-    "Route `speakers` is reachable from Settings (visible in `SettingsScreen.kt` and `AppNavHost.kt`)",
+    "Test: with the English bundles installed and language \"fr\" (engine \"npu\"), `requiredFor` returns the Kroko French bundle and the setup ViewModel requests only `asr-fr-kroko-2025-08-06` with `totalBytes == 71052319`",
+    "Test: `TextNormalizer.normalize(\"L'ÉTÉ EST CHAUD\") == \"L'été est chaud\"`",
+    "Test: subtitle for a French session ends with `\" · FR\"`, English sessions have no language suffix",
+    "Settings screen shows the English/Français selector (visible in `SettingsScreen.kt`)",
     "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
   ],
-  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` engine classes (OnlineRecognizer, OnlineStream, OfflineSpeakerDiarization, SpeakerEmbeddingExtractor, ...) in unit tests; plain `*Config` data classes are fine. Only reference sherpa classes inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
 }

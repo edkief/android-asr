@@ -1,22 +1,18 @@
 {
   "id": "TASK-24",
-  "title": "French transcription: language setting, model download and per-session language",
-  "category": "functional",
-  "description": "Add French as a transcription language (goal 1, multilingual), using the French streaming zipformer already in `ModelCatalog.ASR_FR`.",
+  "title": "Settings screen (LLM endpoint, transcription, speakers) with connection test",
+  "category": "ui",
+  "description": "A screen to edit everything in `AppSettings` plus the API key, and to test the LLM endpoint (goals 1, 2, 4).",
   "steps": [
-    "In `SettingsScreen` replace the disabled language row with a two-option `SingleChoiceSegmentedButtonRow` \"English\" / \"Français\" bound to `AppSettings.asrLanguage` (\"en\"/\"fr\"), saved immediately via `repo.update`.",
-    "Make `ModelSetupViewModel` take the bundles from `ModelCatalog.requiredFor(language)` for the current setting (pass them from the factory). `MainActivity` and the home FAB already use the setting's language, so choosing French with its model missing leads to `setup`, which downloads only the missing French bundle (≈71 MB) — update the setup text to show the real size of the missing bundles: `store.missing(bundles).sumOf { it.totalBytes }`.",
-    "In Settings, under the language selector, show the model status for the selected language: \"Model installed\" or \"Model not downloaded (N MB) – it will be downloaded before your next recording\". Add a \"Delete French model\" text button when French is installed and English is selected (calls `modelStore.delete(ModelCatalog.ASR_FR)`).",
-    "`RecordingController` already passes the language to the factory and saves it on the session; show the language code in `sessionSubtitle` as a suffix `\" · FR\"` only when the language is not \"en\" (add a `language` parameter, update its tests).",
-    "Ensure `TextNormalizer` handles French accented upper-case (e.g. \"ÉTÉ\" → \"Été\") — add a test; use `lowercase(Locale.ROOT)`/`replaceFirstChar { it.titlecase(Locale.ROOT) }`.",
-    "Add tests in `ui/setup/ModelSetupViewModelTest.kt` (only missing bundles are requested; totalBytes equals the missing sum) and `ui/home/SessionSubtitleTest.kt`."
+    "Create `ui/settings/SettingsViewModel.kt`: constructor `(repo: SettingsRepository, chatClient: ChatClient)`. Holds editable form state `data class SettingsForm(val baseUrl: String, val apiKey: String, val model: String, val maxChars: String, val numThreads: Int, val numSpeakers: Int, val clusterThreshold: Float)` initialised from the repo. `fun update(form)`, `fun save()` (writes via `repo.update` + `repo.setApiKey`; maxChars parsed with `toIntOrNull() ?: current`), `fun testConnection()` which first saves, then calls `chatClient.listModels()` and sets `testResult: String` to `\"Connected – N models: a, b, c\"` (first 5 ids) or `\"Failed: <message>\"`; `testing: Boolean` while running.",
+    "Create `ui/settings/SettingsScreen.kt` for route `settings` (replace placeholder), in a scrollable `Column` with section headers: **Language model**: Base URL (`OutlinedTextField`, placeholder `http://192.168.1.10:8000/v1`, keyboard type Uri), API key (password visual transformation with a show/hide toggle), Model name, Max transcript characters (number keyboard), button \"Test connection\" + result text, and if `listModels` returned ids show them as `SuggestionChip`s that fill the Model field when tapped. **Transcription**: Speech engine as a `SingleChoiceSegmentedButtonRow` \"NPU (Nemotron)\" / \"CPU (Kroko)\" bound to `AppSettings.asrEngine` (\"npu\"/\"cpu\"), saved immediately, with supporting text \"NPU uses the Qualcomm Hexagon processor; CPU is slower to start but works everywhere.\" and a row \"Engine check\" navigating to `engine-check`. Threads slider 1..8 (steps 6, label \"CPU threads\"). Language: a disabled row \"English\" (French comes in a later task). **Speakers**: Number of speakers dropdown (\"Automatic\", 2..6), Clustering threshold slider 0.3..0.8 with value shown to 2 decimals and help text \"Lower = more speakers\". A \"Save\" button in the top bar; also save on back navigation (`DisposableEffect` onDispose or BackHandler).",
+    "Write `ui/settings/SettingsViewModelTest.kt` (Robolectric for prefs, `InMemorySecretStore`, fake ChatClient)."
   ],
   "acceptanceCriteria": [
-    "Test: with EN installed and language \"fr\", the setup ViewModel requests only `asr-fr-kroko-2025-08-06` and `totalBytes == 71052319`",
-    "Test: `TextNormalizer.normalize(\"L'ÉTÉ EST CHAUD\") == \"L'été est chaud\"`",
-    "Test: subtitle for a French session ends with `\" · FR\"`, English sessions have no language suffix",
-    "Settings screen shows the English/Français selector (visible in `SettingsScreen.kt`)",
+    "Test: `save()` persists the form (new repository instance reads the same values) and the API key through the SecretStore",
+    "Test: `testConnection()` with a fake returning [\"m1\",\"m2\"] sets testResult `Connected – 2 models: m1, m2`; with a fake throwing LlmException(\"HTTP 401: x\") sets `Failed: HTTP 401: x`",
+    "Test: invalid maxChars text keeps the previous value",
     "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
   ],
-  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` engine classes (OnlineRecognizer, OnlineStream, OfflineSpeakerDiarization, SpeakerEmbeddingExtractor, ...) in unit tests; plain `*Config` data classes are fine. Only reference sherpa classes inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
 }

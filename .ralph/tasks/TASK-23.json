@@ -1,20 +1,27 @@
 {
   "id": "TASK-23",
-  "title": "Ask tab: question/answer chat about the transcript",
-  "category": "ui",
-  "description": "Let the user ask questions about the conversation and get streamed answers that use the previous Q&A as context; the history is saved with the session (goal 4).",
+  "title": "OpenAI-compatible chat client with SSE streaming",
+  "category": "api",
+  "description": "Talk to a remote OpenAI-compatible endpoint (`/chat/completions`, `/models`) with token streaming (goal 4).",
   "steps": [
-    "Create `ui/session/AskViewModel.kt`: constructor `(sessionId, repository, chatClient, settings)`. State `data class AskUiState(val messages: List<ChatMessageEntity> = emptyList(), val streaming: String = \"\", val running: Boolean = false, val error: String? = null, val configured: Boolean = true)`; messages from `observeMessages(QA)`.",
-    "`fun ask(question: String)`: ignore if blank or running. Save the USER message first. Build the prompt with `PromptBuilder.question(transcript, maxChars, history, question)` where history = the previously saved QA messages (before this question) mapped to `LlmMessage(\"user\"/\"assistant\", content)`. Stream into `streaming`; on completion save the ASSISTANT message. On error set `error` and save nothing for the assistant (the user message stays, so the user can retry with `fun retryLast()` which re-sends the last USER message without saving it again). `fun clearHistory()` clears QA messages.",
-    "In `SessionScreen` replace the Ask tab placeholder: same not-configured state as Summary. Else a `LazyColumn` of chat bubbles (user right-aligned with `primaryContainer`, assistant left with `surfaceVariant`, text selectable), the streaming answer as a live bubble, error with \"Retry\", and a bottom row with an `OutlinedTextField` (\"Ask about this conversation…\", ImeAction.Send) and a send `IconButton`. Overflow item \"Clear questions\" calls `clearHistory()`. Auto-scroll to the bottom when messages change.",
-    "Write `ui/session/AskViewModelTest.kt`."
+    "Create `llm/ChatMessage.kt`: `data class LlmMessage(val role: String, val content: String)` (roles \"system\", \"user\", \"assistant\").",
+    "Create `llm/LlmException.kt`: `class LlmException(message: String, val httpCode: Int? = null, cause: Throwable? = null) : Exception(message, cause)`.",
+    "Create `llm/SseParser.kt`: `object SseParser { sealed interface Line { data class Delta(val text: String) : Line; data object Done : Line; data object Ignore : Line }; fun parse(line: String): Line }`. Rules: blank or starting with `:` → Ignore; `data: [DONE]` → Done; `data: <json>` → parse with `Json { ignoreUnknownKeys = true }` as `JsonObject`, read `choices[0].delta.content` (string); missing/null/empty → Ignore, else Delta. A JSON object with an `error` field → throw `LlmException(error.message or the raw json)`. Non-`data:` lines (e.g. `event:`) → Ignore.",
+    "Create `llm/ChatClient.kt`: `interface ChatClient { fun stream(messages: List<LlmMessage>): Flow<String>; suspend fun listModels(): List<String> }` and `class OpenAiChatClient(private val http: OkHttpClient, private val config: () -> LlmConfig) : ChatClient` with `data class LlmConfig(val baseUrl: String, val apiKey: String, val model: String, val temperature: Double = 0.3)`.",
+    "URL building: `baseUrl.trimEnd('/') + \"/chat/completions\"` (the user enters a base URL ending in `/v1`). Throw `LlmException(\"LLM endpoint is not configured\")` if baseUrl or model is blank. Add header `Authorization: Bearer <key>` only if the key is not blank; `Accept: text/event-stream` for streaming.",
+    "`stream`: POST JSON `{\"model\":..., \"messages\":[{\"role\",\"content\"}...], \"stream\": true, \"temperature\": ...}` built with `buildJsonObject`. Implement as `callbackFlow` or `flow { }.flowOn(Dispatchers.IO)`: execute the call (cancel the `Call` on flow cancellation, e.g. `currentCoroutineContext().job.invokeOnCompletion { call.cancel() }`), non-2xx → `LlmException(\"HTTP <code>: <first 300 chars of body>\", code)`; read `body.source()` line by line with `readUtf8Line()` until null or Done, emitting each Delta. Wrap `IOException` in `LlmException(\"Network error: <message>\")`.",
+    "`listModels`: GET `<base>/models`, parse `data[].id`, same error rules.",
+    "Add to `AppContainer`: a separate `llmHttpClient = httpClient.newBuilder().readTimeout(300, SECONDS).build()` and `val chatClient: ChatClient = OpenAiChatClient(llmHttpClient) { val s = settingsRepository.settings.value; LlmConfig(s.llmBaseUrl, settingsRepository.apiKey(), s.llmModel) }`.",
+    "Write `llm/SseParserTest.kt` and `llm/OpenAiChatClientTest.kt` (MockWebServer; SSE body built as a string with `data: {...}\\n\\n` lines and header `Content-Type: text/event-stream`)."
   ],
   "acceptanceCriteria": [
-    "Test: `ask(\"Who decided?\")` with fake streaming \"Bob\" saves USER then ASSISTANT messages in order",
-    "Test: the second question's prompt contains the first Q and A as history (inspect what the fake received)",
-    "Test: on LlmException the USER message is saved, no ASSISTANT message, error set; `retryLast()` succeeds without duplicating the USER message",
-    "Test: blank question does nothing; `clearHistory()` empties messages",
+    "Test: streamed body with deltas \"Hel\", \"lo\" and `data: [DONE]` yields [\"Hel\", \"lo\"]; the recorded request path is `/v1/chat/completions`, body has `\"stream\":true` and the model name",
+    "Test: Authorization header is `Bearer k` when key is \"k\" and absent when key is blank",
+    "Test: HTTP 401 with body `{\"error\":\"bad key\"}` → LlmException with httpCode 401 and message containing `bad key`",
+    "Test: blank baseUrl → LlmException(\"LLM endpoint is not configured\") without any request",
+    "Test: `listModels` parses `{\"data\":[{\"id\":\"a\"},{\"id\":\"b\"}]}` into [\"a\",\"b\"]",
+    "SseParser tests: comment line, `data: [DONE]`, delta with null content, role-only first chunk, error object",
     "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
   ],
-  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` engine classes (OnlineRecognizer, OnlineStream, OfflineSpeakerDiarization, SpeakerEmbeddingExtractor, ...) in unit tests; plain `*Config` data classes are fine. Only reference sherpa classes inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
 }

@@ -1,8 +1,12 @@
 # Parked: Parakeet v3 high-accuracy final pass
 
 **Status:** parked on 2026-10-16. Running Parakeet TDT 0.6B v3 (int8 encoder: 652 MB) on the
-CPU is not viable on the target QCS/QCM6690 devices. Revisit if an NPU/QNN build of the model, or
-a smaller offline multilingual model, becomes an option.
+CPU is not viable on the target Q-6690 devices. The main plan now runs ASR on the NPU (QNN).
+sherpa-onnx also publishes **generic NPU builds of Parakeet v3**
+(`sherpa-onnx-qnn-parakeet-tdt-0.6b-v3-<N>s-android-aarch64.tar.bz2` in the `asr-models-qnn-2`
+release, fixed input windows of N seconds). Revisit once the Engine check shows the NPU works on
+the device: the specs below would need rewriting for the QNN variant (archive download, `provider =
+"qnn"`, fixed-length windows instead of free-length turns).
 
 These files sit outside `.ralph/`, so Ralph does not run them.
 
@@ -22,8 +26,9 @@ Licence: CC-BY-4.0 (NVIDIA). Covers 25 European languages, including English and
 
 ## Task specs
 
-`TASK-31.json`, `TASK-32.json` and `TASK-33.json` were written to run after TASK-30. They assume
-TASK-1 to TASK-30 are done: model catalog, settings, `DiarizeSessionUseCase` with enrolled-speaker
+`TASK-31.json`, `TASK-32.json` and `TASK-33.json` were written for the earlier CPU plan (before the
+NPU tasks were inserted). Their ids clash with the current plan, and they assume the v1 + enrollment
+tasks are done: model catalog, settings, `DiarizeSessionUseCase` with enrolled-speaker
 naming, `SessionRepository`, and the session/settings screens.
 
 To restore them:
