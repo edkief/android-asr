@@ -1,0 +1,20 @@
+{
+  "id": "TASK-18",
+  "title": "Rename speakers and session title; re-run speaker detection",
+  "category": "ui",
+  "description": "Let the user replace \"Speaker N\" with real names, rename the session, and re-run diarization (goal 2).",
+  "steps": [
+    "In `SessionRepository` add `renameSpeaker(sessionId, speakerIndex, label)` (trimmed; blank → ignored) and `renameSession(sessionId, title)` (trimmed; blank → ignored; max 100 chars).",
+    "In `SessionViewModel` add `fun renameSpeaker(index: Int, label: String)`, `fun renameSession(title: String)`.",
+    "In `SessionScreen`: tapping a speaker label in the transcript opens an `AlertDialog` with an `OutlinedTextField` prefilled with the current label, \"Save\"/\"Cancel\". A top-bar overflow menu (`Icons.Filled.MoreVert`) with items \"Rename session\" (same dialog pattern) and \"Detect speakers again\" which calls `ContextCompat.startForegroundService(context, RecordingService.diarizeIntent(context, id))`; disable that item while status is DIARIZING or the session is RECORDING.",
+    "Show a row of `AssistChip`s above the transcript listing the session's speakers; tapping a chip opens the same rename dialog.",
+    "Extend `ui/session/SessionViewModelTest.kt` and `data/SessionRepositoryTest.kt`."
+  ],
+  "acceptanceCriteria": [
+    "Test: `renameSpeaker(0, \"  Alice \")` makes lines with speakerIndex 0 show `Alice`",
+    "Test: blank label or title is ignored; title longer than 100 chars is truncated to 100",
+    "\"Detect speakers again\" menu item exists and sends `RecordingService.diarizeIntent` (visible in `SessionScreen.kt`)",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

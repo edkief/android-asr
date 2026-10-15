@@ -1,0 +1,22 @@
+{
+  "id": "TASK-24",
+  "title": "French transcription: language setting, model download and per-session language",
+  "category": "functional",
+  "description": "Add French as a transcription language (goal 1, multilingual), using the French streaming zipformer already in `ModelCatalog.ASR_FR`.",
+  "steps": [
+    "In `SettingsScreen` replace the disabled language row with a two-option `SingleChoiceSegmentedButtonRow` \"English\" / \"Français\" bound to `AppSettings.asrLanguage` (\"en\"/\"fr\"), saved immediately via `repo.update`.",
+    "Make `ModelSetupViewModel` take the bundles from `ModelCatalog.requiredFor(language)` for the current setting (pass them from the factory). `MainActivity` and the home FAB already use the setting's language, so choosing French with its model missing leads to `setup`, which downloads only the missing French bundle (≈71 MB) — update the setup text to show the real size of the missing bundles: `store.missing(bundles).sumOf { it.totalBytes }`.",
+    "In Settings, under the language selector, show the model status for the selected language: \"Model installed\" or \"Model not downloaded (N MB) – it will be downloaded before your next recording\". Add a \"Delete French model\" text button when French is installed and English is selected (calls `modelStore.delete(ModelCatalog.ASR_FR)`).",
+    "`RecordingController` already passes the language to the factory and saves it on the session; show the language code in `sessionSubtitle` as a suffix `\" · FR\"` only when the language is not \"en\" (add a `language` parameter, update its tests).",
+    "Ensure `TextNormalizer` handles French accented upper-case (e.g. \"ÉTÉ\" → \"Été\") — add a test; use `lowercase(Locale.ROOT)`/`replaceFirstChar { it.titlecase(Locale.ROOT) }`.",
+    "Add tests in `ui/setup/ModelSetupViewModelTest.kt` (only missing bundles are requested; totalBytes equals the missing sum) and `ui/home/SessionSubtitleTest.kt`."
+  ],
+  "acceptanceCriteria": [
+    "Test: with EN installed and language \"fr\", the setup ViewModel requests only `asr-fr-kroko-2025-08-06` and `totalBytes == 71052319`",
+    "Test: `TextNormalizer.normalize(\"L'ÉTÉ EST CHAUD\") == \"L'été est chaud\"`",
+    "Test: subtitle for a French session ends with `\" · FR\"`, English sessions have no language suffix",
+    "Settings screen shows the English/Français selector (visible in `SettingsScreen.kt`)",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

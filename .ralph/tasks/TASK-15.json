@@ -1,0 +1,22 @@
+{
+  "id": "TASK-15",
+  "title": "Diarize sessions after recording (use case + service action + crash recovery)",
+  "category": "functional",
+  "description": "Automatically label speakers when a recording stops, allow re-running it, and recover sessions left in RECORDING/DIARIZING by a crash (goals 2, 3).",
+  "steps": [
+    "Create `diarization/DiarizeSessionUseCase.kt`: `class DiarizeSessionUseCase(private val repository: SessionRepository, private val diarizerFactory: DiarizerFactory, private val settings: SettingsRepository, private val readSamples: (File) -> FloatArray = WavReader::readMono16k)`. `suspend fun run(sessionId: Long, onProgress: (Float) -> Unit = {})`: set status DIARIZING; on `Dispatchers.Default`: read samples from `session.audioPath`, `diarizerFactory.create().use { it.diarize(samples, s.numSpeakers, s.clusterThreshold, onProgress) }`; map the session's segments to `SegmentSpan`, call `SpeakerAssigner.assign`, then `repository.applyDiarization(sessionId, assignment.speakerBySegment, assignment.speakerCount)`. On any exception except CancellationException set status DIARIZATION_FAILED and log with `Log.w`. A session with zero segments goes straight to DIARIZED without running the diarizer.",
+    "Add `val diarizeSessionUseCase = DiarizeSessionUseCase(sessionRepository, diarizerFactory, settingsRepository)` to `AppContainer`.",
+    "In `RecordingService`, after `controller.stop()` returns an id: call `ServiceCompat.startForeground` again with the notification text \"Identifying speakers…\" and type `FOREGROUND_SERVICE_TYPE_DATA_SYNC` (the microphone is no longer used), run `diarizeSessionUseCase.run(id)`, then release the wake lock, stop foreground and `stopSelf()`. Add `ACTION_DIARIZE` with `EXTRA_SESSION_ID` (Long) and `fun diarizeIntent(context, sessionId)`: starts foreground with the same notification (type microphone is not appropriate here: use `ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC` on API 29+ via ServiceCompat, and add `FOREGROUND_SERVICE_DATA_SYNC` permission and `dataSync` to the service's `foregroundServiceType` as `microphone|dataSync`), runs the use case, stops.",
+    "Create `recording/SessionRecovery.kt`: `class SessionRecovery(private val repository: SessionRepository)` with `suspend fun recover()`: for sessions with status RECORDING: `WavWriter.repairHeader(file)` if the file exists, set duration from `(file.length() - 44) / 32` ms, status TRANSCRIBED. For sessions with status DIARIZING: set TRANSCRIBED. Add the needed repository methods (`sessionsWithStatus`, `setStatus`, `setDuration`). Call it from `ConvoApp.onCreate` with `container.applicationScope.launch { }`, but skip it when `container.recordingController.state.value.phase != IDLE`.",
+    "Write `diarization/DiarizeSessionUseCaseTest.kt` and `recording/SessionRecoveryTest.kt` (Robolectric + in-memory Room; fake DiarizerFactory returning scripted turns; `readSamples` lambda returning `FloatArray(16000)`)."
+  ],
+  "acceptanceCriteria": [
+    "Test: with 2 segments and scripted turns for 2 speakers, after `run` the session is DIARIZED, segments have speakerIndex 0 and 1, and speakers `Speaker 1`, `Speaker 2` exist",
+    "Test: a diarizer that throws leaves status DIARIZATION_FAILED and segments untouched",
+    "Test: zero segments -> DIARIZED and the fake diarizer was never created",
+    "Test: SessionRecovery turns a RECORDING session with a 44+3200-byte WAV into TRANSCRIBED with durationMs 100, and a DIARIZING one into TRANSCRIBED",
+    "Manifest service declares `android:foregroundServiceType=\"microphone|dataSync\"`",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

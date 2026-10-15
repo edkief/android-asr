@@ -1,0 +1,21 @@
+{
+  "id": "TASK-29",
+  "title": "v2: name enrolled speakers automatically after diarization",
+  "category": "functional",
+  "description": "After diarization, compute an embedding per detected speaker and label speakers that match an enrolled person by name (goal 5).",
+  "steps": [
+    "Create `diarization/SpeakerSampleCollector.kt`: `object SpeakerSampleCollector { fun collect(samples: FloatArray, turns: List<SpeakerTurn>, speakerMap: (Int) -> Int?, maxMs: Long = 30_000, minTurnMs: Long = 500): Map<Int, FloatArray> }` — for each final speaker index (via `speakerMap` from raw diarizer speaker to renumbered index), concatenate the samples of its turns (16 samples per ms, clamp to array bounds), skipping turns shorter than `minTurnMs`, up to `maxMs` total; drop speakers with less than 2 000 ms collected.",
+    "Change `SpeakerAssigner.Assignment` to also expose `val rawToIndex: Map<Int, Int>` (raw diarizer speaker → renumbered index) and update its tests.",
+    "Extend `DiarizeSessionUseCase` with constructor params `embedderFactory: SpeakerEmbedderFactory` and `enrolled: EnrolledSpeakerStore`. After assignment, if `enrolled.getAll()` is not empty: collect samples, embed each speaker (one embedder, `use {}`), `SpeakerMatcher.assignNames(embeddings, enrolled, settings.speakerMatchThreshold)`, and pass the names to the repository. Change `SessionRepository.applyDiarization` to accept `labels: Map<Int, String>` (default empty) used instead of `Speaker N` where present. Embedding failures must not fail diarization: catch, log with `Log.w(TAG, ...)`, and keep default labels.",
+    "In `SettingsScreen` Speakers section add a \"Voice match threshold\" slider 0.3..0.8 bound to `speakerMatchThreshold`.",
+    "Update `AppContainer` wiring and extend `DiarizeSessionUseCaseTest` and `SpeakerAssignerTest`; add `SpeakerSampleCollectorTest`."
+  ],
+  "acceptanceCriteria": [
+    "Test: with an enrolled \"Alice\" whose embedding equals the fake embedder's output for speaker 0, speaker 0 is labelled `Alice` and speaker 1 `Speaker 2`",
+    "Test: no enrolled speakers → embedder factory never created",
+    "Test: embedder throwing → session still DIARIZED with default labels",
+    "Test: SpeakerSampleCollector caps at 30 000 ms, skips short turns and drops speakers under 2 000 ms",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

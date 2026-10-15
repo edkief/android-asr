@@ -1,0 +1,21 @@
+{
+  "id": "TASK-22",
+  "title": "Summary tab: stream, save and regenerate the summary",
+  "category": "ui",
+  "description": "Summarise the session through the LLM, showing tokens as they arrive, and save the result with the session (goal 4).",
+  "steps": [
+    "In `SessionRepository` add `observeMessages(sessionId, kind): Flow<List<ChatMessageEntity>>`, `addMessage(sessionId, kind, role, content): Long`, `clearMessages(sessionId, kind)`.",
+    "Create `ui/session/SummaryViewModel.kt`: constructor `(sessionId: Long, repository: SessionRepository, chatClient: ChatClient, settings: SettingsRepository)`. State `data class SummaryUiState(val saved: String? = null, val streaming: String = \"\", val running: Boolean = false, val error: String? = null, val configured: Boolean = true)`. `saved` = content of the latest ASSISTANT SUMMARY message. `configured` = baseUrl and model not blank. `fun summarise()`: ignore if running; build the transcript text with `TranscriptFormatter` from the repository's segments/speakers; if blank set error \"The transcript is empty.\"; else collect `chatClient.stream(PromptBuilder.summary(text, maxChars))` appending to `streaming`; on completion `clearMessages(SUMMARY)` then `addMessage(SUMMARY, ASSISTANT, full)`, reset streaming/running. On LlmException set `error = message` and keep the old saved summary. `fun cancel()` cancels the job.",
+    "In `SessionScreen` replace the Summary tab placeholder: if not configured, text \"Set up a language model endpoint in Settings.\" + button navigating to `settings`. Else: button \"Summarise\" (or \"Regenerate\" when a summary is saved), while running show the streaming text + a \"Stop\" button + small `CircularProgressIndicator`; show the saved summary in a `SelectionContainer` with `bodyLarge`. Show error in error color with \"Retry\". Add a \"Copy\" `TextButton` using `LocalClipboardManager` (no ContentCopy icon: it is not in material-icons-core). Render the summary as plain text (no markdown library).",
+    "Write `ui/session/SummaryViewModelTest.kt` (Robolectric + in-memory DB + fake ChatClient + `Dispatchers.setMain`)."
+  ],
+  "acceptanceCriteria": [
+    "Test: fake streaming \"A\",\"B\",\"C\" ends with `saved == \"ABC\"`, one SUMMARY message in DB, `running == false`",
+    "Test: regenerate replaces the previous summary (still exactly one SUMMARY message)",
+    "Test: fake throwing LlmException(\"HTTP 500: x\") sets error and keeps the previous saved summary",
+    "Test: empty transcript sets error `The transcript is empty.` and never calls the client",
+    "Test: the messages sent to the fake equal `PromptBuilder.summary(...)` for the session's transcript",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

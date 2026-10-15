@@ -1,0 +1,22 @@
+{
+  "id": "TASK-33",
+  "title": "v2: re-transcribe each speaker turn after diarization",
+  "category": "functional",
+  "description": "When 'High-accuracy final transcript' is on, replace the live transcript with one produced per speaker utterance by Parakeet v3, so each line has one speaker and better text (goal 6). If anything fails, the live transcript is kept.",
+  "steps": [
+    "Add `SessionStatus.RETRANSCRIBING` (stored by name, no migration needed). Show it as \"Improving transcript…\" in `sessionSubtitle` and in the session screen banner (with a determinate `LinearProgressIndicator` when progress is known).",
+    "In `SessionRepository` add `replaceTranscript(sessionId, segments: List<NewSegment>, speakerCount: Int, labels: Map<Int, String>)` with `data class NewSegment(val startMs: Long, val endMs: Long, val text: String, val speakerIndex: Int)`: in one transaction delete the session's segments and speakers, insert the new segments, insert speakers (label from `labels` or `Speaker N`), set status DIARIZED.",
+    "Extend `DiarizeSessionUseCase` with constructor params `offlineFactory: OfflineTranscriberFactory` and `isModelInstalled: () -> Boolean` (wired to `modelStore.isInstalled(ModelCatalog.PARAKEET)`). After diarization, if `settings.accurateFinalPass && isModelInstalled()`: set RETRANSCRIBING; `UtteranceBuilder.build(turns)`; `rawToIndex = UtteranceBuilder.renumber(utterances)`; transcribe each `samples.sliceMs(u.startMs, u.endMs)` with one transcriber (`use {}`), reporting progress (i + 1) / n through the existing `onProgress`; skip blank results; apply `TextNormalizer.normalize`. Compute enrolled-speaker names exactly as the existing path does, using `rawToIndex`. Then `replaceTranscript(...)`. If the final pass throws (except CancellationException), log with `Log.w(TAG, ...)` and fall back to the existing SpeakerAssigner path, so the session still ends DIARIZED.",
+    "Update the service notification text to \"Improving transcript…\" while the final pass runs (pass a phase callback or observe the session status).",
+    "Wire the new constructor params in `AppContainer`; extend `DiarizeSessionUseCaseTest` (fake offline transcriber returning \"utterance <i>\") and `SessionSubtitleTest`."
+  ],
+  "acceptanceCriteria": [
+    "Test: flag on + model installed + turns A 0–1000, B 1500–2500 → exactly 2 segments with texts `Utterance 0` and `Utterance 1` (fake output normalized) and speakerIndex 0 and 1, old segments gone, status DIARIZED",
+    "Test: flag off → offline factory never created and the SpeakerAssigner path is used",
+    "Test: offline transcriber throwing → live segments kept with speaker labels, status DIARIZED",
+    "Test: blank transcription results are skipped",
+    "Test: `sessionSubtitle` for RETRANSCRIBING contains `Improving transcript…`",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

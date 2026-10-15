@@ -1,0 +1,25 @@
+{
+  "id": "TASK-8",
+  "title": "Room database: sessions, segments, speakers, chat messages",
+  "category": "functional",
+  "description": "Persist sessions so they survive restarts (goal 3) and hold transcript segments, speaker labels, summaries and Q&A (goals 2, 4).",
+  "steps": [
+    "In `app/build.gradle.kts` add `ksp { arg(\"room.schemaLocation\", \"$projectDir/schemas\") }` and commit the generated `app/schemas/` JSON.",
+    "Create in `data/`: `enum class SessionStatus { RECORDING, TRANSCRIBED, DIARIZING, DIARIZED, DIARIZATION_FAILED }`; `enum class MessageKind { SUMMARY, QA }`; `enum class MessageRole { USER, ASSISTANT }`, with a `Converters` class storing enums as their `name`.",
+    "Entities: `SessionEntity(@PrimaryKey(autoGenerate = true) id: Long = 0, title: String, createdAt: Long, durationMs: Long = 0, language: String, audioPath: String = \"\", status: SessionStatus)` table `sessions`; `SegmentEntity(id autoGen, sessionId: Long, startMs: Long, endMs: Long, text: String, speakerIndex: Int? = null)` table `segments`, foreign key to sessions with `onDelete = CASCADE`, index on sessionId; `SpeakerEntity(sessionId: Long, speakerIndex: Int, label: String)` table `speakers`, primary key (sessionId, speakerIndex), FK cascade; `ChatMessageEntity(id autoGen, sessionId: Long, kind: MessageKind, role: MessageRole, content: String, createdAt: Long)` table `chat_messages`, FK cascade, index sessionId.",
+    "DAOs: `SessionDao` (insert returns Long, update, `observeAll(): Flow<List<SessionEntity>>` ordered by createdAt DESC, `observe(id): Flow<SessionEntity?>`, `get(id): SessionEntity?`, `delete(id)`, `findByStatus(status): List<SessionEntity>`, `setStatus(id, status)`); `SegmentDao` (insert, `observeForSession(id): Flow<List<SegmentEntity>>` ordered by startMs, `getForSession(id): List<SegmentEntity>`, `setSpeaker(segmentId, speakerIndex: Int?)`); `SpeakerDao` (`upsert(list)` via @Upsert, `observeForSession(id)`, `getForSession(id)`, `deleteForSession(id)`, `rename(sessionId, speakerIndex, label)`); `ChatMessageDao` (insert, `observe(sessionId, kind): Flow<List<ChatMessageEntity>>` ordered by createdAt then id, `deleteKind(sessionId, kind)`). All non-Flow methods `suspend`.",
+    "`AppDatabase` (`@Database(version = 1, exportSchema = true)`, `@TypeConverters(Converters::class)`), name `convoscribe.db`.",
+    "Create `data/SessionRepository.kt`: `class SessionRepository(private val db: AppDatabase, private val recordingsDir: File)` exposing the DAO operations needed later: `createSession(title, language): Long` (inserts with status RECORDING, then sets `audioPath = File(recordingsDir, \"$id.wav\").absolutePath` and returns id), `addSegment(sessionId, startMs, endMs, text): Long`, `finishRecording(sessionId, durationMs)` (status TRANSCRIBED), `deleteSession(id)` (deletes the WAV file then the row), plus pass-throughs for observe/get. Also `applyDiarization(sessionId, assignments: Map<Long, Int?>, speakerCount: Int)` in a `db.withTransaction { }`: set every segment's speaker, delete old speakers, insert `SpeakerEntity(sessionId, i, \"Speaker ${i + 1}\")` for i in 0 until speakerCount, set status DIARIZED.",
+    "Add to `AppContainer`: `val database = Room.databaseBuilder(context, AppDatabase::class.java, \"convoscribe.db\").build()` and `val sessionRepository = SessionRepository(database, File(context.filesDir, \"recordings\").apply { mkdirs() })`.",
+    "Write `data/SessionRepositoryTest.kt` with Robolectric and `Room.inMemoryDatabaseBuilder(...).allowMainThreadQueries().build()`."
+  ],
+  "acceptanceCriteria": [
+    "Test: `createSession` returns an id, status RECORDING, `audioPath` ends with `/<id>.wav`",
+    "Test: segments come back ordered by startMs from `observeForSession` (use Turbine or `first()`)",
+    "Test: `applyDiarization` sets speakerIndex on segments, creates labels `Speaker 1`..`Speaker N` and sets DIARIZED; calling it again replaces the speakers",
+    "Test: `deleteSession` removes the session, its segments, speakers and messages (cascade) and the WAV file",
+    "`app/schemas/com.convoscribe.data.AppDatabase/1.json` is committed",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

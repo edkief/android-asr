@@ -1,0 +1,20 @@
+{
+  "id": "TASK-23",
+  "title": "Ask tab: question/answer chat about the transcript",
+  "category": "ui",
+  "description": "Let the user ask questions about the conversation and get streamed answers that use the previous Q&A as context; the history is saved with the session (goal 4).",
+  "steps": [
+    "Create `ui/session/AskViewModel.kt`: constructor `(sessionId, repository, chatClient, settings)`. State `data class AskUiState(val messages: List<ChatMessageEntity> = emptyList(), val streaming: String = \"\", val running: Boolean = false, val error: String? = null, val configured: Boolean = true)`; messages from `observeMessages(QA)`.",
+    "`fun ask(question: String)`: ignore if blank or running. Save the USER message first. Build the prompt with `PromptBuilder.question(transcript, maxChars, history, question)` where history = the previously saved QA messages (before this question) mapped to `LlmMessage(\"user\"/\"assistant\", content)`. Stream into `streaming`; on completion save the ASSISTANT message. On error set `error` and save nothing for the assistant (the user message stays, so the user can retry with `fun retryLast()` which re-sends the last USER message without saving it again). `fun clearHistory()` clears QA messages.",
+    "In `SessionScreen` replace the Ask tab placeholder: same not-configured state as Summary. Else a `LazyColumn` of chat bubbles (user right-aligned with `primaryContainer`, assistant left with `surfaceVariant`, text selectable), the streaming answer as a live bubble, error with \"Retry\", and a bottom row with an `OutlinedTextField` (\"Ask about this conversation…\", ImeAction.Send) and a send `IconButton`. Overflow item \"Clear questions\" calls `clearHistory()`. Auto-scroll to the bottom when messages change.",
+    "Write `ui/session/AskViewModelTest.kt`."
+  ],
+  "acceptanceCriteria": [
+    "Test: `ask(\"Who decided?\")` with fake streaming \"Bob\" saves USER then ASSISTANT messages in order",
+    "Test: the second question's prompt contains the first Q and A as history (inspect what the fake received)",
+    "Test: on LlmException the USER message is saved, no ASSISTANT message, error set; `retryLast()` succeeds without duplicating the USER message",
+    "Test: blank question does nothing; `clearHistory()` empties messages",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

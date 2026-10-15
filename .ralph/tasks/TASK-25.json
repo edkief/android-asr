@@ -1,0 +1,23 @@
+{
+  "id": "TASK-25",
+  "title": "Manual on-device test guide and README completion",
+  "category": "docs",
+  "description": "Give the owner a precise checklist to validate the app on the QCS/QCM6690 device, since the loop cannot run on-device tests (PRD acceptance criteria).",
+  "steps": [
+    "Create `docs/MANUAL_TEST.md` with numbered checks, each with Steps and Expected: (1) install with `adb install -r app/build/outputs/apk/debug/app-debug.apk`; (2) first launch model download with progress (~99 MB) and retry after toggling Wi-Fi off mid-download; (3) permission prompt, deny then allow; (4) record 2 minutes of two people speaking English: live text appears within ~1 s of speech; (5) screen off for 30 s during recording keeps recording (notification visible, Stop action works); (6) after Stop: \"Identifying speakers…\" then Speaker 1/2 labels; note the time it took; (7) rename speakers and session, restart app, names persist; (8) share transcript to a notes app; (9) Settings: endpoint + Test connection; (10) Summarise streams and persists; (11) Ask two related questions, second uses context; (12) switch to Français, French model download, French recording; (13) delete session removes it; (14) kill the app during recording (`adb shell am force-stop com.convoscribe`), relaunch: session is listed with the text so far; (15) performance: `adb shell top -m 5` while recording, record CPU % in the report.",
+    "Add a 'Troubleshooting' section: viewing logs with `adb logcat -s sherpa-onnx ConvoScribe AndroidRuntime`, where models live (`/data/data/com.convoscribe/files/models`), clearing data with `adb shell pm clear com.convoscribe`.",
+    "Add a consistent log tag: create `Log.kt` with `const val TAG = \"ConvoScribe\"` and use it in the existing `Log.w` calls (e.g. in `DiarizeSessionUseCase`); add `Log.i(TAG, ...)` for: recording started/stopped (session id, duration), diarization duration and speaker count, model download completed.",
+    "Update `README.md`: features list, architecture overview (one line per package from the PRD layout), the model table (ids and sizes), how to configure an OpenAI-compatible endpoint (base URL must end with `/v1`, e.g. `http://<host>:8000/v1` for vLLM/llama.cpp server/Ollama `http://<host>:11434/v1`), and a link to `docs/MANUAL_TEST.md`.",
+    "Model licences: add a section 'Model licences' to `README.md` and an 'About' section at the bottom of `SettingsScreen` listing each model with its licence and source URL: Kroko streaming EN/FR (CC-BY-SA 4.0, Banafo Kroko ASR community models, https://huggingface.co/Banafo/Kroko-ASR), pyannote segmentation 3.0 (MIT), WeSpeaker ResNet34-LM (Apache-2.0), sherpa-onnx (Apache-2.0).",
+    "Add `android:usesCleartextTraffic=\"true\"` to `<application>` (local LLM servers often use plain HTTP) and mention it in the README security notes."
+  ],
+  "acceptanceCriteria": [
+    "`docs/MANUAL_TEST.md` exists with at least 15 numbered checks, each having Steps and Expected",
+    "`grep -r 'const val TAG' app/src/main` finds exactly one definition and `grep -rn 'Log\\.[iw](TAG' app/src/main` finds at least 4 uses",
+    "README contains sections for Build, Models, LLM endpoint and Manual testing",
+    "Manifest has `usesCleartextTraffic=\"true\"`",
+    "README and the Settings About section both mention `CC-BY-SA` for the Kroko models",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

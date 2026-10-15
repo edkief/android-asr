@@ -1,0 +1,27 @@
+{
+  "id": "TASK-19",
+  "title": "OpenAI-compatible chat client with SSE streaming",
+  "category": "api",
+  "description": "Talk to a remote OpenAI-compatible endpoint (`/chat/completions`, `/models`) with token streaming (goal 4).",
+  "steps": [
+    "Create `llm/ChatMessage.kt`: `data class LlmMessage(val role: String, val content: String)` (roles \"system\", \"user\", \"assistant\").",
+    "Create `llm/LlmException.kt`: `class LlmException(message: String, val httpCode: Int? = null, cause: Throwable? = null) : Exception(message, cause)`.",
+    "Create `llm/SseParser.kt`: `object SseParser { sealed interface Line { data class Delta(val text: String) : Line; data object Done : Line; data object Ignore : Line }; fun parse(line: String): Line }`. Rules: blank or starting with `:` → Ignore; `data: [DONE]` → Done; `data: <json>` → parse with `Json { ignoreUnknownKeys = true }` as `JsonObject`, read `choices[0].delta.content` (string); missing/null/empty → Ignore, else Delta. A JSON object with an `error` field → throw `LlmException(error.message or the raw json)`. Non-`data:` lines (e.g. `event:`) → Ignore.",
+    "Create `llm/ChatClient.kt`: `interface ChatClient { fun stream(messages: List<LlmMessage>): Flow<String>; suspend fun listModels(): List<String> }` and `class OpenAiChatClient(private val http: OkHttpClient, private val config: () -> LlmConfig) : ChatClient` with `data class LlmConfig(val baseUrl: String, val apiKey: String, val model: String, val temperature: Double = 0.3)`.",
+    "URL building: `baseUrl.trimEnd('/') + \"/chat/completions\"` (the user enters a base URL ending in `/v1`). Throw `LlmException(\"LLM endpoint is not configured\")` if baseUrl or model is blank. Add header `Authorization: Bearer <key>` only if the key is not blank; `Accept: text/event-stream` for streaming.",
+    "`stream`: POST JSON `{\"model\":..., \"messages\":[{\"role\",\"content\"}...], \"stream\": true, \"temperature\": ...}` built with `buildJsonObject`. Implement as `callbackFlow` or `flow { }.flowOn(Dispatchers.IO)`: execute the call (cancel the `Call` on flow cancellation, e.g. `currentCoroutineContext().job.invokeOnCompletion { call.cancel() }`), non-2xx → `LlmException(\"HTTP <code>: <first 300 chars of body>\", code)`; read `body.source()` line by line with `readUtf8Line()` until null or Done, emitting each Delta. Wrap `IOException` in `LlmException(\"Network error: <message>\")`.",
+    "`listModels`: GET `<base>/models`, parse `data[].id`, same error rules.",
+    "Add to `AppContainer`: a separate `llmHttpClient = httpClient.newBuilder().readTimeout(300, SECONDS).build()` and `val chatClient: ChatClient = OpenAiChatClient(llmHttpClient) { val s = settingsRepository.settings.value; LlmConfig(s.llmBaseUrl, settingsRepository.apiKey(), s.llmModel) }`.",
+    "Write `llm/SseParserTest.kt` and `llm/OpenAiChatClientTest.kt` (MockWebServer; SSE body built as a string with `data: {...}\\n\\n` lines and header `Content-Type: text/event-stream`)."
+  ],
+  "acceptanceCriteria": [
+    "Test: streamed body with deltas \"Hel\", \"lo\" and `data: [DONE]` yields [\"Hel\", \"lo\"]; the recorded request path is `/v1/chat/completions`, body has `\"stream\":true` and the model name",
+    "Test: Authorization header is `Bearer k` when key is \"k\" and absent when key is blank",
+    "Test: HTTP 401 with body `{\"error\":\"bad key\"}` → LlmException with httpCode 401 and message containing `bad key`",
+    "Test: blank baseUrl → LlmException(\"LLM endpoint is not configured\") without any request",
+    "Test: `listModels` parses `{\"data\":[{\"id\":\"a\"},{\"id\":\"b\"}]}` into [\"a\",\"b\"]",
+    "SseParser tests: comment line, `data: [DONE]`, delta with null content, role-only first chunk, error object",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

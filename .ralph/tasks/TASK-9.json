@@ -1,0 +1,24 @@
+{
+  "id": "TASK-9",
+  "title": "Audio capture, PCM conversion, WAV writer and reader",
+  "category": "functional",
+  "description": "Capture 16 kHz mono audio from the microphone and save it as WAV, and read WAV back as float samples for diarization (goals 1, 2).",
+  "steps": [
+    "Create `audio/AudioFormat.kt`: `object AudioSpec { const val SAMPLE_RATE = 16000; const val CHUNK_SAMPLES = 1600 }` (100 ms chunks).",
+    "Create `audio/Pcm.kt`: `fun ShortArray.toFloatSamples(): FloatArray` (each value / 32768f) and `fun samplesToMs(samples: Long): Long = samples * 1000 / AudioSpec.SAMPLE_RATE`.",
+    "Create `audio/WavWriter.kt`: `class WavWriter(file: File) : Closeable` writing a 44-byte PCM16 mono 16 kHz header with zero sizes on open (`RandomAccessFile` mode \"rw\", `setLength(0)`), `fun write(samples: ShortArray)` appending little-endian samples (use a `ByteBuffer.order(LITTLE_ENDIAN)`), `val samplesWritten: Long`, and `close()` which patches the RIFF chunk size (offset 4 = 36 + dataBytes) and data size (offset 40 = dataBytes). Add `companion object { fun repairHeader(file: File) }` that recomputes both sizes from the file length (for files left by a crash).",
+    "Create `audio/WavReader.kt`: `object WavReader { fun readMono16k(file: File): FloatArray }` which checks `RIFF`/`WAVE`, finds the `fmt ` chunk (require format 1, channels 1, 16000 Hz, 16 bits; throw `IllegalArgumentException` with a clear message otherwise), finds the `data` chunk (walk chunks, do not assume offset 44) and returns samples / 32768f. If the data size field is 0 or larger than the remaining bytes, use the remaining bytes (crash-recovered files).",
+    "Create `audio/AudioSource.kt`: `interface AudioSource { fun chunks(): Flow<ShortArray> }` and `class MicAudioSource : AudioSource` using `AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16000, CHANNEL_IN_MONO, ENCODING_PCM_16BIT, bufferSize)` where bufferSize = `max(AudioRecord.getMinBufferSize(...), CHUNK_SAMPLES * 2 * 4)`. `chunks()` is a `flow { }` on `Dispatchers.IO` that starts recording, loops `read(buf, 0, CHUNK_SAMPLES)` emitting `buf.copyOf(n)` for n > 0 while active, and stops/releases in `finally`. Throw `IllegalStateException(\"Microphone unavailable\")` if state != STATE_INITIALIZED. Annotate with `@SuppressLint(\"MissingPermission\")` and a comment that callers check RECORD_AUDIO.",
+    "Add `<uses-permission android:name=\"android.permission.RECORD_AUDIO\" />` to the manifest.",
+    "Write `audio/WavRoundTripTest.kt` and `audio/PcmTest.kt` (JUnit, TemporaryFolder)."
+  ],
+  "acceptanceCriteria": [
+    "Test: writing 16000 samples produces a file of 44 + 32000 bytes whose header bytes 4..7 = 32036 and 40..43 = 32000 (little-endian)",
+    "Test: `WavReader.readMono16k` returns the written samples converted (e.g. 16384 -> 0.5f, -32768 -> -1.0f)",
+    "Test: a file whose header was left with zero sizes (write, then do not call close; flush via a separate RandomAccessFile write) is read correctly, and `repairHeader` fixes the sizes",
+    "Test: a stereo or 44.1 kHz header makes `readMono16k` throw IllegalArgumentException",
+    "Test: `samplesToMs(16000) == 1000` and `ShortArray(1){16384}.toFloatSamples()[0] == 0.5f`",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "`MicAudioSource` cannot be unit-tested; keep it a thin wrapper. | Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

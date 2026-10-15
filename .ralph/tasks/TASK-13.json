@@ -1,0 +1,23 @@
+{
+  "id": "TASK-13",
+  "title": "Recording screen with permission flow and live transcript",
+  "category": "ui",
+  "description": "The screen where the user starts/stops a recording and watches the live transcript (goal 1).",
+  "steps": [
+    "Create `ui/record/RecordViewModel.kt`: constructor `(controller: RecordingController)`; exposes `state = controller.state` and `fun formatElapsed(ms: Long): String` (mm:ss, or h:mm:ss ≥ 1 h) as a top-level function in the same file; `fun onNavigatedToSession() = controller.consumeCompleted()`.",
+    "Create `ui/record/RecordScreen.kt` (route `record`): top bar \"New recording\" with back arrow. Permissions: `rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions())` asking `RECORD_AUDIO` (+ `POST_NOTIFICATIONS` on API 33+). The Start button first checks `ContextCompat.checkSelfPermission(RECORD_AUDIO)`; if not granted, launch the request; if denied show the text \"Microphone permission is required to record.\" Notifications denial does not block recording.",
+    "Start: `ContextCompat.startForegroundService(context, RecordingService.startIntent(context))`. Stop: `context.startService(RecordingService.stopIntent(context))`.",
+    "Body: big elapsed time (`displayMedium`), phase text (LOADING: \"Loading speech model…\", STOPPING: \"Finishing…\"), a `LazyColumn` of `finalLines` that auto-scrolls to the last item when the list grows, and the partial text in italics with `onSurfaceVariant` color as the last item. Error text in error color when `state.error != null`. A large round FAB-style button: \"Start\" (mic icon) when IDLE, \"Stop\" when RECORDING, disabled otherwise.",
+    "When `state.lastCompletedSessionId` becomes non-null: navigate to `session/{id}` with `popUpTo(\"record\") { inclusive = true }` and call `onNavigatedToSession()`. Until the session screen exists (TASK-17), register a placeholder composable for `session/{id}` in `AppNavHost` showing \"Session <id>\".",
+    "Home: add a `FloatingActionButton` \"New recording\" to `HomeScreen` that navigates to `record`, but if `modelStore.missing(ModelCatalog.requiredFor(language))` is not empty navigate to `setup` instead (compute in the click handler using the container).",
+    "material-icons-core has no Mic/Stop icons: add vector drawables `res/drawable/ic_mic.xml` (24dp, viewport 24, pathData `M12,14c1.66,0 2.99,-1.34 2.99,-3L15,5c0,-1.66 -1.34,-3 -3,-3S9,3.34 9,5v6c0,1.66 1.34,3 3,3zM17.3,11c0,3 -2.54,5.1 -5.3,5.1S6.7,14 6.7,11L5,11c0,3.41 2.72,6.23 6,6.72L11,21h2v-3.28c3.28,-0.48 6,-3.3 6,-6.72h-1.7z`, fillColor `#FF000000`) and `res/drawable/ic_stop.xml` (pathData `M6,6h12v12H6z`), used with `painterResource`. For back arrows use `Icons.AutoMirrored.Filled.ArrowBack`.",
+    "Write `ui/record/FormatElapsedTest.kt`."
+  ],
+  "acceptanceCriteria": [
+    "Test: `formatElapsed(0) == \"00:00\"`, `formatElapsed(61_000) == \"01:01\"`, `formatElapsed(3_600_000) == \"1:00:00\"`",
+    "Navigation route `record` exists and is reachable from the home FAB (visible in `AppNavHost.kt` and `HomeScreen.kt`)",
+    "The Start button path requests RECORD_AUDIO before starting the service (visible in `RecordScreen.kt`)",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

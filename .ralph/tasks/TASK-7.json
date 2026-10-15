@@ -1,0 +1,22 @@
+{
+  "id": "TASK-7",
+  "title": "Settings repository (prefs + encrypted API key)",
+  "category": "functional",
+  "description": "Store user settings needed by ASR, diarization and the LLM client (goals 1, 2, 4). The API key must be stored encrypted.",
+  "steps": [
+    "Create `settings/AppSettings.kt`: `data class AppSettings(val llmBaseUrl: String = \"\", val llmModel: String = \"\", val maxTranscriptChars: Int = 24000, val asrLanguage: String = \"en\", val numThreads: Int = 4, val numSpeakers: Int = -1, val clusterThreshold: Float = 0.5f, val speakerMatchThreshold: Float = 0.5f)` (numSpeakers -1 means automatic).",
+    "Create `settings/SecretStore.kt`: `interface SecretStore { fun getApiKey(): String; fun setApiKey(value: String) }`, `class EncryptedSecretStore(context: Context) : SecretStore` using `EncryptedSharedPreferences.create(context, \"secrets\", MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(), PrefKeyEncryptionScheme.AES256_SIV, PrefValueEncryptionScheme.AES256_GCM)` created lazily, key `api_key`, and `class InMemorySecretStore : SecretStore` (for tests and previews).",
+    "Create `settings/SettingsRepository.kt`: `class SettingsRepository(private val prefs: SharedPreferences, private val secrets: SecretStore)` with `val settings: StateFlow<AppSettings>` (loaded from prefs at construction), `fun update(transform: (AppSettings) -> AppSettings)` that writes every field to prefs (`apply()`) and updates the flow, `fun apiKey(): String` and `fun setApiKey(value: String)` delegating to secrets. Validate in `update`: `maxTranscriptChars` coerced to 2000..400000, `numThreads` to 1..8, `numSpeakers` to -1 or 1..10 (0 or < -1 becomes -1), thresholds to 0.05..0.95, `llmBaseUrl` trimmed and trailing `/` removed, `asrLanguage` must be \"en\" or \"fr\" (else keep old).",
+    "Add to `AppContainer`: `val settingsRepository = SettingsRepository(context.getSharedPreferences(\"settings\", Context.MODE_PRIVATE), EncryptedSecretStore(context))`.",
+    "Replace the hard-coded \"en\" in `MainActivity` with `container.settingsRepository.settings.value.asrLanguage`.",
+    "Write `settings/SettingsRepositoryTest.kt` with Robolectric (`@RunWith(RobolectricTestRunner::class)`, prefs from `ApplicationProvider.getApplicationContext<Context>()`) and `InMemorySecretStore`."
+  ],
+  "acceptanceCriteria": [
+    "Test: defaults are returned on empty prefs",
+    "Test: values written via `update` are read back by a new `SettingsRepository` on the same prefs",
+    "Test: coercions — numThreads 20 -> 8, maxTranscriptChars 10 -> 2000, numSpeakers 0 -> -1, baseUrl `\" http://x:8000/v1/ \"` -> `http://x:8000/v1`, asrLanguage \"de\" keeps previous value",
+    "Test: API key set/get goes through the SecretStore and is not written to the plain prefs file",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "Robolectric cannot use the Android Keystore, so `EncryptedSecretStore` must never be constructed in tests. | Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

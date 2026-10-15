@@ -1,0 +1,19 @@
+{
+  "id": "TASK-16",
+  "title": "Home screen: session list with status and delete",
+  "category": "ui",
+  "description": "Show all saved sessions, newest first, so recordings persist visibly across restarts (goal 3).",
+  "steps": [
+    "Create `ui/home/HomeViewModel.kt`: constructor `(repository: SessionRepository)`; `val sessions: StateFlow<List<SessionRow>>` from `observeAll()` mapped to `data class SessionRow(val id: Long, val title: String, val subtitle: String, val status: SessionStatus)`, `stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())`. `fun delete(id: Long)` launches `repository.deleteSession(id)`.",
+    "Pure top-level function `fun sessionSubtitle(createdAt: Long, durationMs: Long, status: SessionStatus, zone: ZoneId = ZoneId.systemDefault()): String` → `\"16 Oct 2026, 14:05 · 12:34\"` (pattern `d MMM yyyy, HH:mm`, Locale.UK, duration mm:ss or h:mm:ss) followed by `\" · Recording…\"` for RECORDING, `\" · Identifying speakers…\"` for DIARIZING, `\" · Speaker detection failed\"` for DIARIZATION_FAILED, nothing otherwise.",
+    "Rewrite `HomeScreen`: top bar \"ConvoScribe\" with a settings icon button (`Icons.Filled.Settings`) navigating to route `settings` (add a placeholder composable for `settings` in `AppNavHost` if it does not exist yet), a `LazyColumn` of `ListItem`s (headline title, supporting subtitle) that navigate to `session/{id}` on click, long-press (`combinedClickable`) opens an `AlertDialog` \"Delete this session?\" with \"Delete\"/\"Cancel\". Empty state text \"No sessions yet. Tap New recording to start.\". Keep the existing FAB behaviour.",
+    "Write `ui/home/SessionSubtitleTest.kt` (use `ZoneOffset.UTC`) and `ui/home/HomeViewModelTest.kt` (Robolectric, in-memory DB, `Dispatchers.setMain`)."
+  ],
+  "acceptanceCriteria": [
+    "Test: `sessionSubtitle(0L, 754_000, TRANSCRIBED, UTC) == \"1 Jan 1970, 00:00 · 12:34\"` and DIARIZING adds `\" · Identifying speakers…\"`",
+    "Test: HomeViewModel emits sessions newest first; `delete(id)` removes it from the emitted list",
+    "Route `settings` exists in `AppNavHost` (placeholder allowed)",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

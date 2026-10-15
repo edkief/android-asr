@@ -1,15 +1,25 @@
 {
   "id": "TASK-1",
-  "title": "Short description of the first unit of work",
+  "title": "Add idempotent toolchain setup scripts (JDK 17, Android SDK, Gradle)",
   "category": "setup",
-  "description": "What this task delivers and why, in a few sentences. Link the PRD section it serves.",
+  "description": "The machine has only a Java 21 JRE (no javac) and no Android SDK. Create scripts that install, without sudo, everything the build needs into the user's home, and a script that checks the network prerequisites from the PRD. Serves every PRD goal: nothing can be built without it.",
   "steps": [
-    "First concrete step",
-    "Second concrete step"
+    "Create `scripts/setup-toolchain.sh` (bash, `set -euo pipefail`, executable). Use `TOOLS=\"$HOME/.local/share/convoscribe-toolchain\"` and `ANDROID_HOME=\"$HOME/Android/Sdk\"`. Every step must be skipped when its result already exists, so a second run downloads nothing.",
+    "JDK: if `$TOOLS/jdk-17/bin/javac` is missing, download `https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse` (a .tar.gz, follow redirects with `curl -fL`) to a temp file and extract with `tar -xzf <file> --strip-components=1 -C \"$TOOLS/jdk-17\"`.",
+    "Gradle: if `$TOOLS/gradle-8.11.1/bin/gradle` is missing, download `https://services.gradle.org/distributions/gradle-8.11.1-bin.zip` and `unzip -q` it into `$TOOLS` (it creates `gradle-8.11.1/`).",
+    "Android command-line tools: if `$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager` is missing, download `https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip`, unzip it to a temp dir, and move the extracted `cmdline-tools` directory to `$ANDROID_HOME/cmdline-tools/latest`.",
+    "With `JAVA_HOME=$TOOLS/jdk-17` exported, run `yes | sdkmanager --sdk_root=\"$ANDROID_HOME\" --licenses > /dev/null` and then `sdkmanager --sdk_root=\"$ANDROID_HOME\" \"platform-tools\" \"platforms;android-35\" \"build-tools;35.0.0\"`.",
+    "Create `scripts/env.sh` (meant to be sourced, no `set -e`): export `JAVA_HOME=$HOME/.local/share/convoscribe-toolchain/jdk-17`, `ANDROID_HOME=$HOME/Android/Sdk`, `ANDROID_SDK_ROOT=$ANDROID_HOME`, and prepend `$JAVA_HOME/bin`, `$HOME/.local/share/convoscribe-toolchain/gradle-8.11.1/bin`, `$ANDROID_HOME/cmdline-tools/latest/bin` and `$ANDROID_HOME/platform-tools` to `PATH`.",
+    "Create `scripts/check-prereqs.sh`: for each host `https://api.adoptium.net`, `https://github.com`, `https://dl.google.com`, `https://services.gradle.org`, `https://repo.maven.apache.org/maven2/`, `https://maven.google.com/web/index.html`, `https://plugins.gradle.org`, `https://huggingface.co`, run `curl -sS -o /dev/null -m 20 -w '%{http_code}'` and print `OK <host>` or `FAIL <host>`. Exit 1 if any request fails (curl error); any HTTP status code counts as reachable. Also fail if free space under `$HOME` is below 6 GB (`df -Pk \"$HOME\"`).",
+    "Run `bash scripts/check-prereqs.sh`, then `bash scripts/setup-toolchain.sh` twice."
   ],
   "acceptanceCriteria": [
-    "An observable result a reviewer can check",
-    "Tests covering the new behaviour pass"
+    "`bash scripts/check-prereqs.sh` prints OK for every host and exits 0",
+    "`bash scripts/setup-toolchain.sh` exits 0, and a second run exits 0 without downloading anything (no curl download output)",
+    "`bash -c 'source scripts/env.sh && javac -version'` prints `javac 17.`…",
+    "`bash -c 'source scripts/env.sh && gradle --version'` reports Gradle 8.11.1",
+    "`bash -c 'source scripts/env.sh && sdkmanager --list_installed'` lists `platforms;android-35`, `build-tools;35.0.0` and `platform-tools`",
+    "The three scripts are committed and executable (`git ls-files -s scripts` shows mode 100755)"
   ],
-  "notes": "Constraints, pitfalls, or files worth reading first. Delete if empty."
+  "notes": "No Gradle project exists yet, so there is no verify command for this task. If a download host is unreachable, emit BLOCKED with the host name: it is an environment problem. Do not use sudo or apt."
 }

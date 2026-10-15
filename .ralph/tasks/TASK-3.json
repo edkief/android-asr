@@ -1,0 +1,24 @@
+{
+  "id": "TASK-3",
+  "title": "Add the sherpa-onnx 1.13.8 AAR via a checksum-verified fetch script",
+  "category": "setup",
+  "description": "Make the on-device speech engine (sherpa-onnx, PRD Scope) available to the app. The 50 MB AAR is not committed; a script downloads and verifies it, and Gradle fails with a clear message when it is missing.",
+  "steps": [
+    "Create executable `scripts/fetch-sherpa-onnx.sh`: VERSION=1.13.8, SHA256=633c24321e06b1fe79feafa03ea16cbc0f8a286641e2da3559bac91bdb13bd96, DEST=`app/libs/sherpa-onnx-$VERSION.aar` (relative to the repo root; `cd \"$(dirname \"$0\")/..\"` first). If DEST exists and `sha256sum` matches, print `sherpa-onnx AAR OK` and exit 0. Otherwise download `https://github.com/k2-fsa/sherpa-onnx/releases/download/v$VERSION/sherpa-onnx-$VERSION.aar` with `curl -fL` to `$DEST.part`, verify the checksum (exit 1 with a message on mismatch, deleting the .part), then `mv` it to DEST.",
+    "Call `bash \"$(dirname \"$0\")/fetch-sherpa-onnx.sh\"` at the end of `scripts/setup-toolchain.sh`.",
+    "In `app/build.gradle.kts`: `val sherpaAar = file(\"libs/sherpa-onnx-1.13.8.aar\")`, then `check(sherpaAar.exists()) { \"Missing $sherpaAar - run bash scripts/fetch-sherpa-onnx.sh\" }`, and `implementation(files(sherpaAar))`.",
+    "In `defaultConfig` add `ndk { abiFilters += listOf(\"arm64-v8a\", \"x86_64\") }`.",
+    "Create `app/proguard-rules.pro` containing `-keep class com.k2fsa.sherpa.onnx.** { *; }` and reference it from the release build type with `proguardFiles(getDefaultProguardFile(\"proguard-android-optimize.txt\"), \"proguard-rules.pro\")` (minify stays disabled; the rule protects JNI field access if it is ever enabled).",
+    "Create `engine/sherpa/SherpaInfo.kt` with `object SherpaInfo { const val VERSION = \"1.13.8\"; fun defaultFeatureConfig() = com.k2fsa.sherpa.onnx.FeatureConfig(sampleRate = 16000, featureDim = 80) }`. This proves the AAR's classes compile against the app. Do not call it from tests.",
+    "Add a section 'Native engine' to `README.md` explaining the fetch script.",
+    "Run `bash scripts/fetch-sherpa-onnx.sh` then the verify command."
+  ],
+  "acceptanceCriteria": [
+    "`bash scripts/fetch-sherpa-onnx.sh` exits 0 and a second run prints `sherpa-onnx AAR OK` without downloading",
+    "`git status --porcelain` does not list the .aar (it is ignored)",
+    "`unzip -l app/build/outputs/apk/debug/app-debug.apk | grep libsherpa-onnx-jni.so` shows `lib/arm64-v8a/` and `lib/x86_64/` entries and no `armeabi-v7a` or `x86/` entry",
+    "Temporarily renaming the AAR makes `./gradlew help` fail with the message containing `fetch-sherpa-onnx.sh` (restore it afterwards)",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "AAR facts: it contains `classes.jar` (Kotlin API, package `com.k2fsa.sherpa.onnx`) and `jni/<abi>/libsherpa-onnx-jni.so`, `libonnxruntime.so` etc. Using a local `.aar` file dependency is allowed in an application module. | Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

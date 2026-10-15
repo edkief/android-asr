@@ -1,0 +1,22 @@
+{
+  "id": "TASK-6",
+  "title": "First-run model setup screen and start-destination routing",
+  "category": "ui",
+  "description": "On launch, if the models needed for the selected language are missing, show a setup screen that downloads them with a progress bar and a retry button; otherwise go to the home screen. Serves goal 1.",
+  "steps": [
+    "Create `ui/setup/ModelSetupViewModel.kt`: constructor `(downloader: ModelDownloader, store: ModelStore, bundles: List<ModelBundle>)`. State `data class SetupUiState(val totalBytes: Long, val doneBytes: Long = 0, val running: Boolean = false, val error: String? = null, val finished: Boolean = false)` exposed as `StateFlow`. `fun start()` launches in `viewModelScope` collecting `downloader.download(store.missing(bundles))`, updating state; on `ModelDownloadException` set `error = e.message`, `running = false`. `start()` does nothing if already running. `finished = true` on Completed.",
+    "Create `ui/setup/ModelSetupScreen.kt`: title \"Download speech models\", text \"About N MB will be downloaded once and stored on this device.\" (N = totalBytes / 1_000_000), a `LinearProgressIndicator(progress = { done/total })` and `\"x MB / y MB\"` while running, a button \"Download\" (idle) or \"Retry\" (error, with the error text in `MaterialTheme.colorScheme.error`). When `finished` becomes true call `onFinished()`.",
+    "In `AppNavHost`, add route `setup`. Make `AppNavHost` take a `startDestination: String` parameter. In `MainActivity.onCreate` compute it: `if (container.modelStore.missing(ModelCatalog.requiredFor(\"en\")).isEmpty()) \"home\" else \"setup\"` (the language becomes a setting in a later task; use \"en\" now). On finish navigate to `home` with `popUpTo(\"setup\") { inclusive = true }`.",
+    "Create the ViewModel with `viewModel(factory = viewModelFactory { initializer { ModelSetupViewModel(...) } })` reading from `(LocalContext.current.applicationContext as ConvoApp).container`.",
+    "Add the strings to `strings.xml`.",
+    "Write `ui/setup/ModelSetupViewModelTest.kt` with a fake: make `ModelDownloader` usage testable by introducing `interface ModelDownloads { fun download(bundles: List<ModelBundle>): Flow<DownloadEvent> }` implemented by `ModelDownloader`, and have the ViewModel depend on the interface. Use `Dispatchers.setMain(StandardTestDispatcher())` in @Before and `resetMain()` in @After."
+  ],
+  "acceptanceCriteria": [
+    "Test: after `start()` with a fake emitting Progress(50,100) then Completed, an intermediate state has doneBytes == 50 (collect states with Turbine) and the final state has `finished == true` and `running == false`",
+    "Test: fake throwing ModelDownloadException(\"HTTP 500 for x\") gives `error == \"HTTP 500 for x\"` and `running == false`; calling `start()` again clears the error and runs again",
+    "Test: calling `start()` twice while running collects the downloader only once",
+    "`MainActivity` chooses `setup` when models are missing (code path visible in `MainActivity.kt`)",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

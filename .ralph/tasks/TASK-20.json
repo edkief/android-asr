@@ -1,0 +1,18 @@
+{
+  "id": "TASK-20",
+  "title": "Settings screen (LLM endpoint, transcription, speakers) with connection test",
+  "category": "ui",
+  "description": "A screen to edit everything in `AppSettings` plus the API key, and to test the LLM endpoint (goals 1, 2, 4).",
+  "steps": [
+    "Create `ui/settings/SettingsViewModel.kt`: constructor `(repo: SettingsRepository, chatClient: ChatClient)`. Holds editable form state `data class SettingsForm(val baseUrl: String, val apiKey: String, val model: String, val maxChars: String, val numThreads: Int, val numSpeakers: Int, val clusterThreshold: Float)` initialised from the repo. `fun update(form)`, `fun save()` (writes via `repo.update` + `repo.setApiKey`; maxChars parsed with `toIntOrNull() ?: current`), `fun testConnection()` which first saves, then calls `chatClient.listModels()` and sets `testResult: String` to `\"Connected – N models: a, b, c\"` (first 5 ids) or `\"Failed: <message>\"`; `testing: Boolean` while running.",
+    "Create `ui/settings/SettingsScreen.kt` for route `settings` (replace placeholder), in a scrollable `Column` with section headers: **Language model**: Base URL (`OutlinedTextField`, placeholder `http://192.168.1.10:8000/v1`, keyboard type Uri), API key (password visual transformation with a show/hide toggle), Model name, Max transcript characters (number keyboard), button \"Test connection\" + result text, and if `listModels` returned ids show them as `SuggestionChip`s that fill the Model field when tapped. **Transcription**: Threads slider 1..8 (steps 6). Language: a disabled row \"English\" (French comes in a later task). **Speakers**: Number of speakers dropdown (\"Automatic\", 2..6), Clustering threshold slider 0.3..0.8 with value shown to 2 decimals and help text \"Lower = more speakers\". A \"Save\" button in the top bar; also save on back navigation (`DisposableEffect` onDispose or BackHandler).",
+    "Write `ui/settings/SettingsViewModelTest.kt` (Robolectric for prefs, `InMemorySecretStore`, fake ChatClient)."
+  ],
+  "acceptanceCriteria": [
+    "Test: `save()` persists the form (new repository instance reads the same values) and the API key through the SecretStore",
+    "Test: `testConnection()` with a fake returning [\"m1\",\"m2\"] sets testResult `Connected – 2 models: m1, m2`; with a fake throwing LlmException(\"HTTP 401: x\") sets `Failed: HTTP 401: x`",
+    "Test: invalid maxChars text keeps the previous value",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

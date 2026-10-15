@@ -1,0 +1,21 @@
+{
+  "id": "TASK-32",
+  "title": "v2: offline transcriber (sherpa Parakeet) and utterance builder",
+  "category": "functional",
+  "description": "Build the pieces of the final pass (goal 6): an offline transcriber that turns an audio slice into text, and pure logic that turns diarization turns into utterances to transcribe.",
+  "steps": [
+    "Create `asr/OfflineTranscriber.kt`: `interface OfflineTranscriber : Closeable { fun transcribe(samples: FloatArray): String }` and `fun interface OfflineTranscriberFactory { fun create(): OfflineTranscriber }`.",
+    "Create `engine/sherpa/SherpaOfflineTranscriber.kt`: builds `OfflineRecognizer(assetManager = null, config = OfflineRecognizerConfig(featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80), modelConfig = OfflineModelConfig(transducer = OfflineTransducerModelConfig(encoder = <abs>, decoder = <abs>, joiner = <abs>), tokens = <abs>, numThreads = n, provider = \"cpu\", modelType = \"nemo_transducer\"), decodingMethod = \"greedy_search\"))`. `transcribe`: `val stream = recognizer.createStream(); stream.acceptWaveform(samples, 16000); recognizer.decode(stream); val text = recognizer.getResult(stream).text; stream.release(); return text.trim()`. `close()` → `recognizer.release()`. Add `SherpaOfflineTranscriberFactory(store, settings)` (throws `IllegalStateException(\"Model not installed: asr-parakeet-tdt-0.6b-v3-int8\")` if missing) and `offlineTranscriberFactory` in `AppContainer`.",
+    "Create `diarization/UtteranceBuilder.kt`: `data class Utterance(val startMs: Long, val endMs: Long, val rawSpeaker: Int)`, `object UtteranceBuilder { fun build(turns: List<SpeakerTurn>, mergeGapMs: Long = 500, minMs: Long = 300, maxMs: Long = 30_000): List<Utterance>; fun renumber(utterances: List<Utterance>): Map<Int, Int> }`. build: sort turns by start; merge consecutive turns of the same speaker when the gap ≤ mergeGapMs; drop results shorter than minMs; split any utterance longer than maxMs into `ceil(len / maxMs)` equal parts. renumber: raw speaker → 0, 1, … in order of first appearance.",
+    "Create `audio/SampleSlicer.kt`: `fun FloatArray.sliceMs(startMs: Long, endMs: Long): FloatArray` (16 samples per ms, clamped to bounds, empty array if start ≥ end).",
+    "Write `diarization/UtteranceBuilderTest.kt` and `audio/SampleSlicerTest.kt`."
+  ],
+  "acceptanceCriteria": [
+    "Test: turns A 0–1000, A 1200–2000, B 2100–3000 → utterances [A 0–2000, B 2100–3000]",
+    "Test: a turn of 200 ms is dropped; a 65 000 ms turn becomes 3 utterances of ≈21 667 ms covering the full span without gaps",
+    "Test: renumber gives first-appearing raw speaker index 0",
+    "Test: `sliceMs(1000, 2000)` on 3 s of audio returns 16 000 samples; out-of-range end is clamped",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "sherpa API (v1.13.8, package `com.k2fsa.sherpa.onnx`): `OfflineRecognizer(assetManager: AssetManager? = null, config: OfflineRecognizerConfig)`, `createStream(): OfflineStream`, `decode(stream)`, `getResult(stream): OfflineRecognizerResult` (field `text`), `release()`; `OfflineStream.acceptWaveform(samples, sampleRate)`, `release()`; `OfflineModelConfig(transducer, numThreads, provider, modelType, tokens, ...)`; `OfflineTransducerModelConfig(encoder, decoder, joiner)`. | Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

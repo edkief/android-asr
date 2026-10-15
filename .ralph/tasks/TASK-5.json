@@ -1,0 +1,22 @@
+{
+  "id": "TASK-5",
+  "title": "Model downloader with progress, size verification and atomic rename",
+  "category": "functional",
+  "description": "Download missing model files over HTTPS with progress reporting so the app can fetch ~99 MB of models on first run (PRD Scope: models downloaded on first run).",
+  "steps": [
+    "Add `<uses-permission android:name=\"android.permission.INTERNET\" />` to the manifest.",
+    "Create `models/ModelDownloader.kt`: `sealed interface DownloadEvent { data class Progress(val bytesDone: Long, val bytesTotal: Long, val currentFile: String) : DownloadEvent; data object Completed : DownloadEvent }` and `class ModelDownloadException(message: String, cause: Throwable? = null) : Exception(message, cause)`.",
+    "`class ModelDownloader(private val client: OkHttpClient, private val store: ModelStore)` with `fun download(bundles: List<ModelBundle>): Flow<DownloadEvent>` built with `flow { }.flowOn(Dispatchers.IO)`. bytesTotal = sum of sizeBytes of all files of all given bundles. Files whose target already exists with the exact size are counted as done and skipped.",
+    "For each other file: GET `url`; on non-2xx throw `ModelDownloadException(\"HTTP <code> for <fileName>\")`. Stream the body to `<target>.part` (create parent dirs) with an 64 KiB buffer, emitting `Progress` at most every 256 KiB and once at the end of each file. After writing, if the .part length != sizeBytes, delete it and throw `ModelDownloadException(\"Size mismatch for <fileName>: expected X, got Y\")`. Otherwise rename the .part to the target (`renameTo`, throw if false). Wrap `IOException` in `ModelDownloadException`. Check `currentCoroutineContext().ensureActive()` in the copy loop so cancellation stops the download. Emit `Completed` at the end.",
+    "Add to `AppContainer`: `val httpClient = OkHttpClient.Builder().connectTimeout(15, SECONDS).readTimeout(120, SECONDS).build()` and `val modelDownloader = ModelDownloader(httpClient, modelStore)`.",
+    "Write `models/ModelDownloaderTest.kt` using `MockWebServer`, a `TemporaryFolder`, and test bundles built in the test whose URLs point at `server.url(\"/a.bin\")` etc. Collect with `toList()` inside `runTest`."
+  ],
+  "acceptanceCriteria": [
+    "Test: two files served with correct bodies -> both targets exist with right sizes, no `.part` files remain, last event is `Completed`, last Progress has bytesDone == bytesTotal",
+    "Test: server returns 404 -> flow throws ModelDownloadException whose message contains `HTTP 404`",
+    "Test: body shorter than sizeBytes -> throws with message starting `Size mismatch` and the `.part` file is deleted",
+    "Test: a file already installed with exact size is not requested (`server.requestCount` equals the number of missing files)",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

@@ -1,0 +1,20 @@
+{
+  "id": "TASK-31",
+  "title": "v2: Parakeet v3 model bundle and 'High-accuracy transcript' setting",
+  "category": "functional",
+  "description": "Prepare the optional high-accuracy final pass (PRD goal 6): add the multilingual Parakeet TDT 0.6B v3 offline model to the catalog, a setting to enable it, and download it through the existing setup screen.",
+  "steps": [
+    "In `models/ModelCatalog.kt` add `ModelKind.ASR_OFFLINE` and `val PARAKEET = ModelBundle(id = \"asr-parakeet-tdt-0.6b-v3-int8\", displayName = \"High-accuracy transcription (Parakeet v3)\", kind = ASR_OFFLINE, language = null, files = ..., asr = AsrFiles(\"encoder.int8.onnx\", \"decoder.int8.onnx\", \"joiner.int8.onnx\", \"tokens.txt\", modelType = \"nemo_transducer\"))`, base URL `https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/`, files (name, size): `encoder.int8.onnx` 652184281, `decoder.int8.onnx` 11845275, `joiner.int8.onnx` 6355277, `tokens.txt` 93939. Add it to `all`.",
+    "Change `requiredFor(language: String, accurateFinalPass: Boolean = false)` to append PARAKEET when the flag is true. Update all callers (`MainActivity`, home FAB, `ModelSetupViewModel` factory, Settings model status) to pass `settings.accurateFinalPass`.",
+    "Add `val accurateFinalPass: Boolean = false` to `AppSettings`, persisted by `SettingsRepository` like the other fields.",
+    "In `SettingsScreen` Transcription section add a `Switch` row \"High-accuracy final transcript\" with supporting text \"After recording, re-transcribe each speaker turn with a larger model (English, French and 23 other European languages). Downloads 670 MB; slower to finish.\" When switched on and PARAKEET is not installed, navigate to `setup` (which now includes it). Add a \"Delete high-accuracy model\" text button when installed and the switch is off (`modelStore.delete(PARAKEET)`). Add Parakeet v3 (CC-BY-4.0, NVIDIA) to the About licences list and README.",
+    "Extend `ModelCatalogTest`, `SettingsRepositoryTest` and `ModelSetupViewModelTest`."
+  ],
+  "acceptanceCriteria": [
+    "Test: `PARAKEET.totalBytes == 670478772` and `requiredFor(\"en\", true)` ends with `asr-parakeet-tdt-0.6b-v3-int8` while `requiredFor(\"en\")` does not contain it",
+    "Test: `accurateFinalPass` round-trips through `SettingsRepository`",
+    "Test: with EN models installed and the flag on, the setup ViewModel requests only the Parakeet bundle",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

@@ -1,0 +1,22 @@
+{
+  "id": "TASK-12",
+  "title": "Foreground RecordingService (microphone type) with notification",
+  "category": "functional",
+  "description": "Keep recording alive when the screen is off or the app is in background (goal 1) by running the controller inside a foreground service of type microphone (required from Android 14).",
+  "steps": [
+    "Manifest: add permissions `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, `POST_NOTIFICATIONS`, `WAKE_LOCK`, and `<service android:name=\".service.RecordingService\" android:exported=\"false\" android:foregroundServiceType=\"microphone\" />`.",
+    "Create `service/RecordingService.kt`: `class RecordingService : Service()` with `private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)`. `onBind` returns null. Companion: `const val ACTION_START = \"com.convoscribe.START\"`, `ACTION_STOP = \"com.convoscribe.STOP\"`, `fun startIntent(context)`, `fun stopIntent(context)`.",
+    "`onStartCommand`: for ACTION_START create the notification channel `recording` (IMPORTANCE_LOW, name \"Recording\"), call `ServiceCompat.startForeground(this, 1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)` (the type argument is ignored below API 29 by ServiceCompat), acquire a partial `WakeLock` (tag `ConvoScribe:recording`), then `container.recordingController.start(scope)`. For ACTION_STOP: `scope.launch { controller.stop(); releaseWakeLock(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }`. Return `START_NOT_STICKY`.",
+    "Notification: small icon `R.drawable.ic_launcher_foreground`, title \"Recording\", text \"Tap to open ConvoScribe\", ongoing, content intent opening `MainActivity` (`PendingIntent.FLAG_IMMUTABLE`), and an action \"Stop\" with a `PendingIntent.getService` for ACTION_STOP.",
+    "Also observe `controller.state`: if phase becomes IDLE with an `error` while the service is running, release the wake lock, stop foreground and `stopSelf()`.",
+    "`onDestroy`: release wake lock and cancel scope.",
+    "Add a small pure helper `service/RecordingNotificationText.kt`: `fun recordingNotificationText(elapsedMs: Long): String` returning `\"Recording – mm:ss\"` (hh:mm:ss when ≥ 1 h) and update the notification text from the state flow at most once per second. Unit-test that helper."
+  ],
+  "acceptanceCriteria": [
+    "`app/src/main/AndroidManifest.xml` declares the service with `foregroundServiceType=\"microphone\"` and the 5 permissions",
+    "Test: `recordingNotificationText(65_000) == \"Recording – 01:05\"` and `recordingNotificationText(3_725_000) == \"Recording – 1:02:05\"`",
+    "`lintDebug` reports no errors about foreground service types or missing permissions",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "The service is not unit-tested beyond the helper (starting it would load the native library). Get the container with `(application as ConvoApp).container`. | Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

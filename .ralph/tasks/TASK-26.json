@@ -1,0 +1,23 @@
+{
+  "id": "TASK-26",
+  "title": "v2: enrolled speakers table (DB v2 auto-migration) and embedding math",
+  "category": "functional",
+  "description": "Start v2 speaker enrollment (PRD goal 5): store named voice embeddings and provide cosine-similarity matching, without breaking existing user data.",
+  "steps": [
+    "Create `data/EnrolledSpeakerEntity.kt`: table `enrolled_speakers`, `(@PrimaryKey(autoGenerate = true) id: Long = 0, name: String, embedding: ByteArray, createdAt: Long)` with a unique index on `name`. Add converters in `data/EmbeddingCodec.kt`: `fun FloatArray.toBytes(): ByteArray` / `fun ByteArray.toFloats(): FloatArray` (little-endian float32 via ByteBuffer).",
+    "Create `EnrolledSpeakerDao`: `observeAll(): Flow<List<EnrolledSpeakerEntity>>` (by name), `getAll()`, `upsertByName` implemented as `@Insert(onConflict = REPLACE)`, `delete(id)`.",
+    "Bump `AppDatabase` to `version = 2` with `autoMigrations = [AutoMigration(from = 1, to = 2)]`, add the entity and DAO. Commit `app/schemas/com.convoscribe.data.AppDatabase/2.json`.",
+    "Create `diarization/SpeakerMatcher.kt`: `object SpeakerMatcher { fun cosine(a: FloatArray, b: FloatArray): Float` (0f if either norm is 0; require equal sizes) `; data class Enrolled(val name: String, val embedding: FloatArray); fun assignNames(embeddings: Map<Int, FloatArray>, enrolled: List<Enrolled>, threshold: Float): Map<Int, String> }`. `assignNames`: compute all (speakerIndex, enrolled) scores ≥ threshold, sort by score desc, assign greedily so each speaker index and each enrolled name is used at most once.",
+    "Create `data/EnrolledSpeakerStore.kt`: `interface EnrolledSpeakerStore { fun observeAll(): Flow<List<EnrolledSpeakerEntity>>; suspend fun getAll(): List<SpeakerMatcher.Enrolled>; suspend fun save(name: String, embedding: FloatArray); suspend fun delete(id: Long) }` and `class EnrolledSpeakerRepository(dao: EnrolledSpeakerDao) : EnrolledSpeakerStore`. Add `val enrolledSpeakers: EnrolledSpeakerStore = EnrolledSpeakerRepository(database.enrolledSpeakerDao())` to `AppContainer`. Later tasks depend on the interface only.",
+    "Write `diarization/SpeakerMatcherTest.kt`, `data/EmbeddingCodecTest.kt` and `data/EnrolledSpeakerRepositoryTest.kt` (Robolectric, in-memory DB)."
+  ],
+  "acceptanceCriteria": [
+    "`app/schemas/com.convoscribe.data.AppDatabase/2.json` is committed and the build (Room auto-migration validation) passes",
+    "Test: cosine of identical vectors ≈ 1, orthogonal = 0, zero vector = 0",
+    "Test: speakers 0 and 1 score 0.9 and 0.8 against \"Alice\", speaker 1 scores 0.6 against \"Bob\" (build vectors or stub the scores via small 2-D embeddings): threshold 0.5 gives {0: Alice, 1: Bob}; threshold 0.7 gives {0: Alice}",
+    "Test: FloatArray → bytes → FloatArray round-trips exactly",
+    "Test: saving the same name twice keeps one row with the newer embedding",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}

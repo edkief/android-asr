@@ -1,0 +1,23 @@
+{
+  "id": "TASK-4",
+  "title": "Model catalog and on-disk model store",
+  "category": "functional",
+  "description": "Describe every downloadable model (PRD 'Model catalog') in code, and track which are installed on disk. Serves goals 1, 2 and 5: the engines and the downloader read paths from here.",
+  "steps": [
+    "Create `models/ModelCatalog.kt` with: `enum class ModelKind { ASR, SEGMENTATION, EMBEDDING }`; `data class ModelFile(val fileName: String, val url: String, val sizeBytes: Long)`; `data class AsrFiles(val encoder: String, val decoder: String, val joiner: String, val tokens: String, val modelType: String)`; `data class ModelBundle(val id: String, val displayName: String, val kind: ModelKind, val language: String?, val files: List<ModelFile>, val asr: AsrFiles? = null) { val totalBytes: Long get() = files.sumOf { it.sizeBytes } }`.",
+    "In the same file `object ModelCatalog` with vals `ASR_EN`, `ASR_FR`, `SEGMENTATION`, `EMBEDDING`, `val all = listOf(...)`, `fun asrFor(language: String): ModelBundle` (\"en\" -> ASR_EN, \"fr\" -> ASR_FR, else throws IllegalArgumentException) and `fun requiredFor(language: String) = listOf(asrFor(language), SEGMENTATION, EMBEDDING)`.",
+    "ASR_EN: id `asr-en-kroko-2025-08-06`, displayName \"English speech recognition\", language \"en\", base URL `https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06/resolve/main/`, files (name, size): `encoder.onnx` 70092599, `decoder.onnx` 617488, `joiner.onnx` 336817, `tokens.txt` 6310; asr = AsrFiles(\"encoder.onnx\", \"decoder.onnx\", \"joiner.onnx\", \"tokens.txt\", modelType \"zipformer2\").",
+    "ASR_FR: id `asr-fr-kroko-2025-08-06`, displayName \"French speech recognition\", language \"fr\", base URL `https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06/resolve/main/`, files: `encoder.onnx` 70092599, `decoder.onnx` 617488, `joiner.onnx` 336817, `tokens.txt` 5415; same AsrFiles names, modelType \"zipformer2\".",
+    "SEGMENTATION: id `seg-pyannote-3-0-int8`, displayName \"Speaker segmentation\", language null, one file `model.int8.onnx` 1540506 from `https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.int8.onnx`.",
+    "EMBEDDING: id `emb-wespeaker-resnet34-lm`, displayName \"Speaker embeddings\", language null, one file `wespeaker_en_voxceleb_resnet34_LM.onnx` 26530550 from `https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx` (keep the misspelt `recongition`).",
+    "Create `models/ModelStore.kt`: `class ModelStore(private val root: File)` (root = `filesDir/models`) with `fun bundleDir(bundle: ModelBundle): File = File(root, bundle.id)`, `fun fileFor(bundle: ModelBundle, fileName: String): File`, `fun isInstalled(bundle: ModelBundle): Boolean` (every file exists and `length() == sizeBytes`), `fun missing(bundles: List<ModelBundle>): List<ModelBundle>`, `fun delete(bundle: ModelBundle)` (recursive delete of its dir).",
+    "Add `val modelStore = ModelStore(File(context.filesDir, \"models\"))` to `AppContainer`.",
+    "Write `models/ModelCatalogTest.kt` and `models/ModelStoreTest.kt` (JUnit `TemporaryFolder`)."
+  ],
+  "acceptanceCriteria": [
+    "ModelCatalogTest: `requiredFor(\"en\")` returns ids [asr-en-kroko-2025-08-06, seg-pyannote-3-0-int8, emb-wespeaker-resnet34-lm]; `ASR_EN.totalBytes == 71053214`; `ASR_FR.totalBytes == 71052319`; every URL starts with `https://`; `asrFor(\"de\")` throws",
+    "ModelStoreTest: bundle is not installed when a file is missing; not installed when a file has the wrong size; installed when all files exist with exact sizes (create files with `RandomAccessFile.setLength`); `missing()` returns only the incomplete bundles; `delete()` removes the directory",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. Never instantiate `com.k2fsa.sherpa.onnx` classes in unit tests and only reference them inside package `com.convoscribe.engine.sherpa`. Source root: `app/src/main/java/com/convoscribe/`, tests: `app/src/test/java/com/convoscribe/`."
+}
