@@ -2,6 +2,39 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-8 — Room database: sessions, segments, speakers, chat messages
+Added `data/Enums.kt` (SessionStatus, MessageKind, MessageRole), `data/Converters.kt` (TypeConverters
+that round-trip enums through their `name`), the four entities
+(`SessionEntity`/`SegmentEntity`/`SpeakerEntity` with composite PK
+`sessionId+speakerIndex` / `ChatMessageEntity`), four DAOs (all
+non-Flow methods `suspend`, SpeakerDao.upsert is `@Upsert`),
+`AppDatabase` (version 1, exportSchema = true, name `convoscribe.db`,
+`@TypeConverters(Converters::class)`) and `SessionRepository` with
+`createSession` (insert then stamp `audioPath = <dir>/<id>.wav`),
+`addSegment`, `finishRecording` (status TRANSCRIBED, stamps
+durationMs), `deleteSession` (removes the WAV file then the row,
+cascades segments/speakers/chat), and `applyDiarization` wrapped in
+`db.withTransaction { }` (set every segment's speaker, delete old
+speakers, upsert "Speaker 1..N" rows, set status DIARIZED). Added
+`ksp { arg("room.schemaLocation", "$projectDir/schemas") }` to
+`app/build.gradle.kts` and committed the generated
+`app/schemas/com.convoscribe.data.AppDatabase/1.json`. Wired
+`AppContainer.database = Room.databaseBuilder(...).build()` and
+`AppContainer.sessionRepository = SessionRepository(db,
+filesDir/recordings)`. `data/SessionRepositoryTest.kt` (Robolectric,
+`Room.inMemoryDatabaseBuilder(...).allowMainThreadQueries()`)
+covers: createSession id/RECORDING/`/<id>.wav` audioPath;
+observeForSession ordered by startMs (Turbine `test { }` and
+`first()`); applyDiarization writes the speaker index, creates
+`Speaker 1`..`Speaker N`, sets DIARIZED; re-running applyDiarization
+replaces the speakers; deleteSession cascades segments/speakers/
+chat and removes the WAV file (also: unknown id is a no-op);
+finishRecording sets durationMs and TRANSCRIBED; observeAllSessions
+orders by createdAt DESC. Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest
+lintDebug assembleDebug` exits 0 (47 unit tests, all pass; ktlint,
+lint, assembleDebug clean).
+
 ## 2026-10-15 — TASK-7 — Settings repository (prefs + encrypted API key)
 Added `settings/AppSettings.kt` (data class with the documented defaults), `settings/SecretStore.kt`
 declaring `interface SecretStore { getApiKey(); setApiKey(value) }` plus `EncryptedSecretStore`
