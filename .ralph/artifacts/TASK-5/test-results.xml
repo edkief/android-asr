@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.convoscribe.models.ModelDownloaderTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-15T16:15:37" hostname="android-asr-main" time="0.925">
+  <properties/>
+  <testcase name="http404_throwsWithHttpCodeInMessage" classname="com.convoscribe.models.ModelDownloaderTest" time="0.814"/>
+  <testcase name="twoFiles_bothInstalledWithCorrectSizes_andLastEventIsCompleted" classname="com.convoscribe.models.ModelDownloaderTest" time="0.078"/>
+  <testcase name="bodyShorterThanSize_throwsSizeMismatch_andDeletesPart" classname="com.convoscribe.models.ModelDownloaderTest" time="0.023"/>
+  <testcase name="alreadyInstalledFile_isNotRequested" classname="com.convoscribe.models.ModelDownloaderTest" time="0.009"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

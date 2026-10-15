@@ -2,6 +2,27 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-5 — Model downloader with progress, size verification and atomic rename
+Added `<uses-permission android:name="android.permission.INTERNET" />` to `AndroidManifest.xml`,
+created `models/ModelDownloader.kt` with `sealed interface DownloadEvent { Progress(bytesDone,
+bytesTotal, currentFile); Completed }`, `class ModelDownloadException(message, cause)` and
+`class ModelDownloader(client, store).download(bundles): Flow<DownloadEvent>` built with
+`flow { }.flowOn(Dispatchers.IO)`. Streams each file to `<target>.part` with a 64 KiB buffer,
+emits `Progress` at most every 256 KiB plus once at end-of-file, verifies `partFile.length()
+== file.sizeBytes` (deletes on mismatch), and renames `.part` → target via `renameTo`.
+Pre-installed files at exact size skip the network. Wraps `IOException` in
+`ModelDownloadException`, throws `"HTTP <code> for <name>"` on non-2xx, and calls
+`currentCoroutineContext().ensureActive()` each loop iteration so cancellation tears down the
+in-flight request. `AppContainer` now exposes `httpClient = OkHttpClient.Builder()
+.connectTimeout(15s).readTimeout(120s).build()` and `modelDownloader = ModelDownloader(httpClient,
+modelStore)`. `models/ModelDownloaderTest.kt` uses `MockWebServer` + `TemporaryFolder` for four
+cases: two-file install → both targets right size, no `.part`, last event `Completed`, last
+Progress `bytesDone == bytesTotal`; HTTP 404 → `ModelDownloadException` with `HTTP 404`; short
+body → `Size mismatch` and `.part` deleted; pre-installed file not requested
+(`server.requestCount` matches missing files). Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (23 unit tests, all pass).
+
 ## 2026-10-15 — TASK-4 — Model catalog and on-disk model store
 Added `models/ModelCatalog.kt` with `ModelKind` enum,
 `ModelFile`/`AsrFiles`/`ModelBundle` data classes and an `object
