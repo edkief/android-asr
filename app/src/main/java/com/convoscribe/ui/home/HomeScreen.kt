@@ -17,13 +17,13 @@ fun HomeScreen() {
     Scaffold(
         topBar = {
             TopAppBar(title = { Text(text = "ConvoScribe") })
-        },
+        }
     ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentAlignment = Alignment.Center,
+            contentAlignment = Alignment.Center
         ) {
             Text(text = "No sessions yet")
         }

@@ -1,6 +1,6 @@
 [
   { "id": "TASK-1", "passes": true },
-  { "id": "TASK-2", "passes": false },
+  { "id": "TASK-2", "passes": true },
   { "id": "TASK-3", "passes": false },
   { "id": "TASK-4", "passes": false },
   { "id": "TASK-5", "passes": false },
