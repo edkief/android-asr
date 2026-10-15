@@ -47,17 +47,21 @@ import com.convoscribe.models.ModelCatalog
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun ModelSetupScreen(onFinished: () -> Unit) {
+fun ModelSetupScreen(onFinished: () -> Unit, initialEngine: String? = null) {
     val context = LocalContext.current
     val container = (context.applicationContext as ConvoApp).container
     val vm: ModelSetupViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
                 val settings = container.settingsRepository.settings.value
+                val engine = when (initialEngine) {
+                    "npu", "cpu" -> initialEngine
+                    else -> settings.asrEngine
+                }
                 ModelSetupViewModel(
                     downloader = container.modelDownloader,
                     store = container.modelStore,
-                    bundles = ModelCatalog.requiredFor(settings.asrLanguage, settings.asrEngine)
+                    bundles = ModelCatalog.requiredFor(settings.asrLanguage, engine)
                 )
             }
         }

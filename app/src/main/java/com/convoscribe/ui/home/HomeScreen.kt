@@ -3,13 +3,22 @@ package com.convoscribe.ui.home
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -28,6 +37,12 @@ import com.convoscribe.models.ModelCatalog
  * any required bundle is missing the click handler routes to
  * `setup` instead, so the FAB works in both first-run and steady
  * state.
+ *
+ * The top-bar overflow menu ([Icons.Filled.MoreVert]) carries the
+ * `Engine check` entry that opens the `engine-check` diagnostics
+ * screen. Kept here so the FAB stays focused on the primary
+ * action (start a recording) and the diagnostics tools do not
+ * crowd the landing surface.
  *
  * @param navController app-level controller; passed in (rather than
  *   re-read via `rememberNavController`) so a configuration change
@@ -49,9 +64,32 @@ fun HomeScreen(navController: NavHostController) {
         val target = if (missing.isEmpty()) "record" else "setup"
         navController.navigate(target)
     }
+    var overflowExpanded by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text(text = stringResource(R.string.app_name)) })
+            TopAppBar(
+                title = { Text(text = stringResource(R.string.app_name)) },
+                actions = {
+                    IconButton(onClick = { overflowExpanded = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = null
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = overflowExpanded,
+                        onDismissRequest = { overflowExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(text = stringResource(R.string.home_engine_check)) },
+                            onClick = {
+                                overflowExpanded = false
+                                navController.navigate("engine-check")
+                            }
+                        )
+                    }
+                }
+            )
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(

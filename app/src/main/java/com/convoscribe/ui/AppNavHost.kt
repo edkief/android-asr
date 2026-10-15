@@ -10,18 +10,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.convoscribe.R
+import com.convoscribe.ui.enginecheck.EngineCheckScreen
 import com.convoscribe.ui.home.HomeScreen
 import com.convoscribe.ui.record.RecordScreen
 import com.convoscribe.ui.setup.ModelSetupScreen
 
 private const val ROUTE_HOME = "home"
 private const val ROUTE_SETUP = "setup"
+private const val ROUTE_SETUP_WITH_ENGINE = "setup?engine={engine}"
 private const val ROUTE_RECORD = "record"
 private const val ROUTE_SESSION_DETAIL = "session/{id}"
+private const val ROUTE_ENGINE_CHECK = "engine-check"
 
 /**
  * Single navigation graph for the app. The first-run model download
@@ -33,8 +38,11 @@ private const val ROUTE_SESSION_DETAIL = "session/{id}"
  * Routes:
  *  - `home` — landing screen with the "New recording" FAB and
  *    session list;
- *  - `setup` — first-run model download;
+ *  - `setup` — first-run model download (also reachable with
+ *    `?engine=npu|cpu` to scope the download to one engine);
  *  - `record` — live-transcript screen reached from the FAB;
+ *  - `engine-check` — diagnostics screen reached from the home
+ *    overflow menu;
  *  - `session/{id}` — placeholder until TASK-14 builds the real
  *    session-detail screen.
  */
@@ -54,8 +62,31 @@ fun AppNavHost(startDestination: String = ROUTE_HOME) {
                 }
             )
         }
+        composable(
+            route = ROUTE_SETUP_WITH_ENGINE,
+            arguments = listOf(
+                navArgument("engine") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            val engine = backStackEntry.arguments?.getString("engine")
+            ModelSetupScreen(
+                initialEngine = engine,
+                onFinished = {
+                    navController.navigate(ROUTE_HOME) {
+                        popUpTo(ROUTE_SETUP) { inclusive = true }
+                    }
+                }
+            )
+        }
         composable(ROUTE_RECORD) {
             RecordScreen(navController = navController)
+        }
+        composable(ROUTE_ENGINE_CHECK) {
+            EngineCheckScreen(navController = navController)
         }
         composable(ROUTE_SESSION_DETAIL) { backStackEntry ->
             val id = backStackEntry.arguments?.getString("id")?.toLongOrNull() ?: 0L
