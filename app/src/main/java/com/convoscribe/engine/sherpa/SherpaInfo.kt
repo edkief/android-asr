@@ -19,9 +19,10 @@ object SherpaInfo {
      * Default 16 kHz / 80-dim log-mel features used by every sherpa-onnx
      * streaming model in this project (Nemotron NPU + Kroko CPU).
      */
-    fun defaultFeatureConfig(): com.k2fsa.sherpa.onnx.FeatureConfig =
-        com.k2fsa.sherpa.onnx.FeatureConfig(
+    fun defaultFeatureConfig(): com.k2fsa.sherpa.onnx.FeatureConfig {
+        return com.k2fsa.sherpa.onnx.FeatureConfig(
             sampleRate = 16_000,
-            featureDim = 80,
+            featureDim = 80
         )
+    }
 }

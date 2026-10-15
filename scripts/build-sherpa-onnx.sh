@@ -175,12 +175,14 @@ if [[ ! -f "$OUT/libonnxruntime.so" ]]; then
   echo "ERROR: $OUT/libonnxruntime.so is missing after build." >&2
   exit 1
 fi
-if ! strings "$OUT/libsherpa-onnx-jni.so" | grep -q "Java_com_k2fsa_sherpa_onnx_OfflineSpeakerDiarization"; then
+if ! grep -q "Java_com_k2fsa_sherpa_onnx_OfflineSpeakerDiarization" \
+     <(strings "$OUT/libsherpa-onnx-jni.so" 2>/dev/null); then
   echo "ERROR: libsherpa-onnx-jni.so does not export OfflineSpeakerDiarization JNI symbols." >&2
   echo "       Build was probably done with SHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=OFF." >&2
   exit 1
 fi
-if ! strings "$OUT/libsherpa-onnx-jni.so" | grep -q "prependAdspLibraryPath"; then
+if ! grep -q "prependAdspLibraryPath" \
+     <(strings "$OUT/libsherpa-onnx-jni.so" 2>/dev/null); then
   echo "ERROR: libsherpa-onnx-jni.so does not reference prependAdspLibraryPath." >&2
   echo "       Build was probably done without SHERPA_ONNX_ENABLE_QNN=ON." >&2
   exit 1
