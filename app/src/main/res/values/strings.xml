@@ -107,4 +107,14 @@
     <string name="session_rename_label">Name</string>
     <string name="session_rename_save">Save</string>
     <string name="session_rename_cancel">Cancel</string>
+    <string name="session_summary_summarise">Summarise</string>
+    <string name="session_summary_regenerate">Regenerate</string>
+    <string name="session_summary_stop">Stop</string>
+    <string name="session_summary_copy">Copy</string>
+    <string name="session_summary_retry">Retry</string>
+    <string name="session_summary_empty_error">The transcript is empty.</string>
+    <string name="session_summary_not_configured">Set up a language model endpoint in Settings.</string>
+    <string name="session_summary_open_settings">Open Settings</string>
+    <string name="session_summary_empty">No summary yet. Tap Summarise to generate one.</string>
+    <string name="session_summary_copy_done">Copied to clipboard</string>
 </resources>

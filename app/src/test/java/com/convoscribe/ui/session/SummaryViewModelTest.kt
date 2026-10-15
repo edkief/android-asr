@@ -1,0 +1,337 @@
+package com.convoscribe.ui.session
+
+import android.content.Context
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import com.convoscribe.data.AppDatabase
+import com.convoscribe.data.MessageKind
+import com.convoscribe.data.MessageRole
+import com.convoscribe.data.SessionRepository
+import com.convoscribe.llm.ChatClient
+import com.convoscribe.llm.LlmException
+import com.convoscribe.llm.LlmMessage
+import com.convoscribe.llm.PromptBuilder
+import com.convoscribe.settings.InMemorySecretStore
+import com.convoscribe.settings.SettingsRepository
+import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * Unit tests for [SummaryViewModel]. The repository is real (the
+ * ViewModel reads segments, speakers and chat messages out of
+ * Room) but the database is an in-memory Room under Robolectric,
+ * so nothing touches the device. The LLM is a [FakeChatClient]
+ * that records every `stream()` call and replays a configured
+ * token sequence (or throws a configured exception).
+ *
+ * `Dispatchers.setMain(...)` is mandatory because the ViewModel's
+ * `viewModelScope` is hard-wired to `Main.immediate`.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+class SummaryViewModelTest {
+
+    private val dispatcher = StandardTestDispatcher()
+
+    private lateinit var context: Context
+    private lateinit var db: AppDatabase
+    private lateinit var recordingsDir: File
+    private lateinit var repo: SessionRepository
+    private lateinit var prefs: android.content.SharedPreferences
+    private lateinit var secrets: InMemorySecretStore
+
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(dispatcher)
+        context = ApplicationProvider.getApplicationContext()
+        // Both Room executors run synchronously on the calling
+        // thread. Without this, `advanceUntilIdle()` never
+        // observes the suspend DAO calls (`getSegments`,
+        // `getSpeakers`, `addMessage`) because they would be
+        // dispatched to Room's background executor pool, which
+        // the test scheduler does not drive.
+        val syncExecutor = java.util.concurrent.Executor { it.run() }
+        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .setQueryExecutor(syncExecutor)
+            .setTransactionExecutor(syncExecutor)
+            .build()
+        recordingsDir = File(context.filesDir, "summary-vm-test-${System.nanoTime()}")
+        recordingsDir.mkdirs()
+        repo = SessionRepository(db, recordingsDir)
+        prefs = context.getSharedPreferences(
+            "summary-vm-test-${System.nanoTime()}",
+            Context.MODE_PRIVATE
+        )
+        secrets = InMemorySecretStore()
+    }
+
+    @After
+    fun tearDown() {
+        db.close()
+        Dispatchers.resetMain()
+        if (recordingsDir.exists()) {
+            recordingsDir.deleteRecursively()
+        }
+    }
+
+    private fun newSettings(): SettingsRepository = SettingsRepository(prefs, secrets)
+
+    private fun configureSettings(repo: SettingsRepository) {
+        repo.update { previous ->
+            previous.copy(
+                llmBaseUrl = "http://example.test/v1",
+                llmModel = "m",
+                maxTranscriptChars = 24_000
+            )
+        }
+    }
+
+    /**
+     * Populate [sessionId] with two segments and a single-speaker
+     * diarization so the transcript-formatter produces a
+     * non-blank string. The text is fixed to `"hello world"` so the
+     * assertions can compare against `PromptBuilder.summary` exactly.
+     */
+    private suspend fun seedTranscript(sessionId: Long, text: String = "hello world") {
+        repo.addSegment(sessionId = sessionId, startMs = 0L, endMs = 1_000L, text = text)
+        repo.addSegment(sessionId = sessionId, startMs = 1_000L, endMs = 2_000L, text = "and again")
+        val segments = repo.getSegments(sessionId)
+        repo.applyDiarization(
+            sessionId = sessionId,
+            assignments = mapOf(segments[0].id to 0, segments[1].id to 0),
+            speakerCount = 1
+        )
+    }
+
+    @Test
+    fun summarise_streamsTokensPersistsOneAssistantSummary() = runTest(dispatcher) {
+        val id = repo.createSession(title = "demo", language = "en")
+        seedTranscript(id)
+        val settings = newSettings().also { configureSettings(it) }
+        val client = FakeChatClient(tokens = listOf("A", "B", "C"))
+        val vm = SummaryViewModel(
+            sessionId = id,
+            repository = repo,
+            chatClient = client,
+            settings = settings
+        )
+
+        vm.summarise()
+        // The streaming flow is collected on viewModelScope; wait
+        // for it to drain the token queue and persist the row.
+        advanceUntilIdle()
+
+        // Wait for the Room observer to mirror the persisted
+        // SUMMARY row back into `state.saved`. The summarise
+        // coroutine finishes first, then the observer picks up
+        // the insert on the next dispatcher tick.
+        val state = vm.state.first { it.saved == "ABC" && !it.running }
+        assertEquals("ABC", state.saved)
+        assertFalse(state.running)
+        assertTrue(state.streaming.isEmpty())
+
+        val rows = db.chatMessageDao().observe(id, MessageKind.SUMMARY).first()
+        assertEquals(1, rows.size)
+        assertEquals(MessageRole.ASSISTANT, rows[0].role)
+        assertEquals(MessageKind.SUMMARY, rows[0].kind)
+        assertEquals("ABC", rows[0].content)
+        assertEquals(1, client.streamCalls.get())
+    }
+
+    @Test
+    fun summarise_regenerateReplacesPreviousSummary() = runTest(dispatcher) {
+        val id = repo.createSession(title = "demo", language = "en")
+        seedTranscript(id)
+        val settings = newSettings().also { configureSettings(it) }
+        val client = FakeChatClient(tokens = listOf("first"))
+        val vm = SummaryViewModel(
+            sessionId = id,
+            repository = repo,
+            chatClient = client,
+            settings = settings
+        )
+
+        vm.summarise()
+        advanceUntilIdle()
+        // Wait for the persisted row to be observed back into the
+        // state — the same caveat as the streaming test.
+        assertEquals("first", vm.state.first { it.saved == "first" && !it.running }.saved)
+
+        // Re-run with a different token list. The previous
+        // SUMMARY row must be cleared before the new one lands —
+        // there is still exactly one SUMMARY row afterwards.
+        client.replaceTokens(listOf("second"))
+        vm.summarise()
+        advanceUntilIdle()
+
+        val state = vm.state.first { it.saved == "second" && !it.running }
+        assertEquals("second", state.saved)
+        val rows = db.chatMessageDao().observe(id, MessageKind.SUMMARY).first()
+        assertEquals(1, rows.size)
+        assertEquals("second", rows[0].content)
+    }
+
+    @Test
+    fun summarise_llmExceptionKeepsPreviousSavedSummary() = runTest(dispatcher) {
+        val id = repo.createSession(title = "demo", language = "en")
+        seedTranscript(id)
+        val settings = newSettings().also { configureSettings(it) }
+        val client = FakeChatClient(tokens = listOf("first"))
+        val vm = SummaryViewModel(
+            sessionId = id,
+            repository = repo,
+            chatClient = client,
+            settings = settings
+        )
+
+        vm.summarise()
+        advanceUntilIdle()
+        val previousSaved = vm.state.first { it.saved == "first" && !it.running }.saved
+        assertEquals("first", previousSaved)
+
+        // Second call throws — the previous saved summary must
+        // survive intact in the DB, on the state, and the test
+        // asserts on `error`.
+        client.replaceError(LlmException("HTTP 500: x"))
+        vm.summarise()
+        advanceUntilIdle()
+
+        val state = vm.state.first { it.error != null && !it.running }
+        assertEquals("HTTP 500: x", state.error)
+        assertFalse(state.running)
+        assertEquals("first", state.saved)
+
+        val rows = db.chatMessageDao().observe(id, MessageKind.SUMMARY).first()
+        assertEquals(1, rows.size)
+        assertEquals("first", rows[0].content)
+    }
+
+    @Test
+    fun summarise_emptyTranscriptSetsErrorAndNeverCallsClient() = runTest(dispatcher) {
+        val id = repo.createSession(title = "demo", language = "en")
+        // No segments inserted — the rendered transcript is blank.
+        val settings = newSettings().also { configureSettings(it) }
+        val client = FakeChatClient(tokens = listOf("should not be called"))
+        val vm = SummaryViewModel(
+            sessionId = id,
+            repository = repo,
+            chatClient = client,
+            settings = settings
+        )
+
+        vm.summarise()
+        advanceUntilIdle()
+
+        val state = vm.state.first { it.error != null }
+        assertEquals("The transcript is empty.", state.error)
+        assertFalse(state.running)
+        assertNull(state.saved)
+        assertEquals(0, client.streamCalls.get())
+
+        val rows = db.chatMessageDao().observe(id, MessageKind.SUMMARY).first()
+        assertTrue(rows.isEmpty())
+    }
+
+    @Test
+    fun summarise_messagesEqualPromptBuilderSummary() = runTest(dispatcher) {
+        val id = repo.createSession(title = "demo", language = "en")
+        seedTranscript(id, text = "hello world")
+        val settings = newSettings().also { configureSettings(it) }
+        val client = FakeChatClient(tokens = listOf("OK"))
+        val vm = SummaryViewModel(
+            sessionId = id,
+            repository = repo,
+            chatClient = client,
+            settings = settings
+        )
+
+        vm.summarise()
+        advanceUntilIdle()
+
+        assertNotNull(client.lastMessages)
+        val expected = PromptBuilder.summary(
+            transcript = expectedTranscriptFor(id),
+            maxChars = settings.settings.value.maxTranscriptChars
+        )
+        assertEquals(expected, client.lastMessages)
+    }
+
+    /**
+     * Build the transcript the ViewModel sees so the test does not
+     * have to mirror the formatter's behaviour.
+     */
+    private suspend fun expectedTranscriptFor(id: Long): String {
+        val segments = repo.getSegments(id)
+        val speakers = repo.getSpeakers(id)
+        return com.convoscribe.data.TranscriptFormatter.toText(
+            com.convoscribe.data.TranscriptFormatter.lines(segments, speakers)
+        )
+    }
+
+    /**
+     * Fake [ChatClient] for [SummaryViewModel] tests. Records the
+     * most recent [stream] call (asserted on by the
+     * `messagesEqualPromptBuilderSummary` test) and the number of
+     * invocations. Each `stream()` emits the configured `tokens`
+     * in order, or throws the configured `error` if one was set
+     * after construction. Tests that need to vary the response
+     * between calls use [replaceTokens] / [replaceError].
+     */
+    private class FakeChatClient(
+        tokens: List<String>,
+        private val initialError: Throwable? = null
+    ) : ChatClient {
+        private val tokensRef = java.util.concurrent.atomic.AtomicReference(tokens)
+        private val errorRef = java.util.concurrent.atomic.AtomicReference<Throwable?>(initialError)
+
+        val streamCalls = AtomicInteger(0)
+
+        @Volatile
+        var lastMessages: List<LlmMessage>? = null
+            private set
+
+        fun replaceTokens(tokens: List<String>) {
+            tokensRef.set(tokens)
+            errorRef.set(null)
+        }
+
+        fun replaceError(error: Throwable) {
+            tokensRef.set(emptyList())
+            errorRef.set(error)
+        }
+
+        override fun stream(messages: List<LlmMessage>): Flow<String> {
+            streamCalls.incrementAndGet()
+            lastMessages = messages
+            val error = errorRef.get()
+            val tokens = tokensRef.get()
+            return flow {
+                error?.let { throw it }
+                tokens.forEach { emit(it) }
+            }
+        }
+
+        override suspend fun listModels(): List<String> = emptyList()
+    }
+}

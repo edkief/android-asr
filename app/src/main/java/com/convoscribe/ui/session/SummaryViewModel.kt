@@ -1,0 +1,240 @@
+package com.convoscribe.ui.session
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.convoscribe.data.MessageKind
+import com.convoscribe.data.MessageRole
+import com.convoscribe.data.SessionRepository
+import com.convoscribe.data.TranscriptFormatter
+import com.convoscribe.llm.ChatClient
+import com.convoscribe.llm.LlmException
+import com.convoscribe.llm.PromptBuilder
+import com.convoscribe.settings.SettingsRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+
+/**
+ * UI snapshot for the session Summary tab.
+ *
+ * @property saved the most recent ASSISTANT SUMMARY message's
+ *   content, or `null` when the session has never been summarised.
+ * @property streaming partial answer currently streaming from the
+ *   LLM. Empty when nothing is running.
+ * @property running `true` while a streaming request is in flight;
+ *   the screen greys out "Summarise" and exposes a "Stop" button.
+ * @property error human-readable failure message; cleared on the
+ *   next successful summarise. The previous `saved` summary stays
+ *   visible when an error happens, so the user does not lose
+ *   already-generated work.
+ * @property configured `false` when either the LLM base URL or the
+ *   model is blank — the screen swaps to a "Set up a language
+ *   model endpoint in Settings" placeholder in that case.
+ */
+data class SummaryUiState(
+    val saved: String? = null,
+    val streaming: String = "",
+    val running: Boolean = false,
+    val error: String? = null,
+    val configured: Boolean = true
+)
+
+/**
+ * ViewModel for the Summary tab. Drives a one-shot LLM call that
+ * summarises the session transcript and writes the result as an
+ * ASSISTANT SUMMARY [ChatMessageEntity]. The UI observes a single
+ * [SummaryUiState] `StateFlow`; the repository's chat-message
+ * observer is folded into the same state via the saved-flow `combine`
+ * inside [seedSavedFromRepository].
+ *
+ * Behaviour contract (mirrored by the unit tests):
+ *
+ *  - [summarise] ignores the request when `running == true`.
+ *  - The transcript is built from the persisted segments and
+ *    speakers through [TranscriptFormatter]. When the rendered
+ *    text is blank, `error` is set to `"The transcript is empty."`
+ *    and the LLM client is **not** called.
+ *  - Otherwise the LLM is called with
+ *    `PromptBuilder.summary(text, settings.maxTranscriptChars)`.
+ *    Every token is appended to `streaming`.
+ *  - On completion the SUMMARY kind is wiped, the full text is
+ *    saved as a fresh ASSISTANT row, and `streaming` / `running`
+ *    are reset.
+ *  - An [LlmException] (transport or HTTP failure) sets `error`
+ *    to the message verbatim and keeps the old `saved` value.
+ *  - [cancel] stops the in-flight `summarise` job; a subsequent
+ *    `summarise` call starts a fresh run.
+ *
+ * @param sessionId primary key of the session to summarise.
+ * @param repository façade over the database; provides segments,
+ *   speakers and chat messages.
+ * @param chatClient LLM streaming client — fakes are accepted
+ *   here so the unit test can drive deterministic token sequences.
+ * @param settings persisted settings; the summary budget comes
+ *   from `maxTranscriptChars`, and `configured` is derived from
+ *   `llmBaseUrl` / `llmModel`.
+ */
+class SummaryViewModel(
+    private val sessionId: Long,
+    private val repository: SessionRepository,
+    private val chatClient: ChatClient,
+    private val settings: SettingsRepository
+) : ViewModel() {
+
+    private val _state: MutableStateFlow<SummaryUiState> =
+        MutableStateFlow(initialState())
+    val state: StateFlow<SummaryUiState> = _state.asStateFlow()
+
+    /**
+     * In-flight summarise job. Tracked so [cancel] can interrupt
+     * the streaming flow mid-answer; `null` when nothing is
+     * running. The streaming flow's `catch` block does the same
+     * bookkeeping on a thrown [LlmException], so the field is
+     * always in sync with the UI.
+     */
+    private var job: Job? = null
+
+    init {
+        // Mirror the persisted SUMMARY row into `state.saved` so
+        // the user sees their previous summary immediately when
+        // the tab opens. The Room observer re-emits whenever a new
+        // SUMMARY is inserted (i.e. after a successful summarise),
+        // so we never have to push the value ourselves.
+        viewModelScope.launch {
+            repository.observeMessages(sessionId, MessageKind.SUMMARY).collect { rows ->
+                val assistant = rows.lastOrNull { it.role == MessageRole.ASSISTANT }
+                _state.value = _state.value.copy(saved = assistant?.content)
+            }
+        }
+        // Mirror the configured flag from the repository. Settings
+        // is a `StateFlow`, so any future edit (the user types a
+        // URL in the Settings screen and pops back) flips the
+        // placeholder off without a manual refresh.
+        viewModelScope.launch {
+            settings.settings.collect { s ->
+                _state.value = _state.value.copy(
+                    configured = s.llmBaseUrl.isNotBlank() && s.llmModel.isNotBlank()
+                )
+            }
+        }
+    }
+
+    private fun initialState(): SummaryUiState {
+        val s = settings.settings.value
+        return SummaryUiState(
+            configured = s.llmBaseUrl.isNotBlank() && s.llmModel.isNotBlank()
+        )
+    }
+
+    /**
+     * Drive the streaming summary call. No-op when a previous run
+     * is still in flight (`running == true`); otherwise the
+     * transcript is rendered, the streaming flow is collected,
+     * and the resulting text is persisted as the new SUMMARY
+     * message.
+     *
+     * Errors surface through [SummaryUiState.error]; the previous
+     * `saved` summary is preserved so the user does not lose it
+     * when the LLM endpoint hiccups mid-run.
+     */
+    fun summarise() {
+        if (_state.value.running) return
+        job = viewModelScope.launch {
+            val transcript = buildTranscript()
+            if (transcript.isBlank()) {
+                _state.value = _state.value.copy(error = "The transcript is empty.")
+                return@launch
+            }
+            val maxChars = settings.settings.value.maxTranscriptChars
+            val messages = PromptBuilder.summary(transcript, maxChars)
+
+            _state.value = _state.value.copy(
+                streaming = "",
+                running = true,
+                error = null
+            )
+
+            val accumulated = StringBuilder()
+            try {
+                chatClient.stream(messages)
+                    .onEach { token ->
+                        accumulated.append(token)
+                        _state.value = _state.value.copy(streaming = accumulated.toString())
+                    }
+                    .catch { failure ->
+                        // Cancellation is handled by the surrounding
+                        // coroutine machinery — it does not flip
+                        // `error` because the user explicitly asked
+                        // to stop. LlmException is the only path
+                        // the UI surfaces as a red message.
+                        if (failure is LlmException) {
+                            _state.value = _state.value.copy(
+                                running = false,
+                                streaming = "",
+                                error = failure.message
+                            )
+                        } else {
+                            throw failure
+                        }
+                    }
+                    .collect()
+
+                val full = accumulated.toString()
+                // Persist the new summary only when the flow
+                // completed normally and produced at least one
+                // token. A cancelled or empty run leaves the
+                // previous saved value untouched.
+                if (full.isNotEmpty()) {
+                    repository.clearMessages(sessionId, MessageKind.SUMMARY)
+                    repository.addMessage(
+                        sessionId = sessionId,
+                        kind = MessageKind.SUMMARY,
+                        role = MessageRole.ASSISTANT,
+                        content = full
+                    )
+                }
+                _state.value = _state.value.copy(
+                    running = false,
+                    streaming = ""
+                )
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                // `cancel()` aborted the run — reset the flags and
+                // leave the persisted summary alone.
+                _state.value = _state.value.copy(
+                    running = false,
+                    streaming = ""
+                )
+            }
+        }
+    }
+
+    /**
+     * Cancel the in-flight summary request. The underlying
+     * OkHttp call in [OpenAiChatClient.stream] is cancelled
+     * through the flow's `invokeOnCompletion` hook, so the
+     * server stops producing tokens as soon as this returns. The
+     * previous `saved` summary (if any) is left untouched.
+     */
+    fun cancel() {
+        job?.cancel()
+        job = null
+    }
+
+    /**
+     * Render the persisted segments + speakers as plain text.
+     * Pulls both lists from the repository; runs on the
+     * dispatcher [viewModelScope] picks (`Dispatchers.Main.immediate`
+     * for tests with `setMain`).
+     */
+    private suspend fun buildTranscript(): String {
+        val segments = repository.getSegments(sessionId)
+        val speakers = repository.getSpeakers(sessionId)
+        val lines = TranscriptFormatter.lines(segments, speakers)
+        return TranscriptFormatter.toText(lines)
+    }
+}

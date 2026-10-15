@@ -6,14 +6,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
@@ -22,6 +26,8 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,8 +52,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -116,7 +124,20 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
             }
         }
     )
+    val summaryVm: SummaryViewModel = viewModel(
+        factory = viewModelFactory {
+            initializer {
+                SummaryViewModel(
+                    sessionId = sessionId,
+                    repository = container.sessionRepository,
+                    chatClient = container.chatClient,
+                    settings = container.settingsRepository
+                )
+            }
+        }
+    )
     val state by vm.uiState.collectAsStateWithLifecycle()
+    val summaryState by summaryVm.state.collectAsStateWithLifecycle()
 
     SessionBody(
         title = state.title,
@@ -124,6 +145,7 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
         lines = state.lines,
         speakers = state.speakers,
         notFound = state.notFound,
+        summaryState = summaryState,
         onBack = { navController.popBackStack() },
         onShare = {
             // Build the share intent on the main thread; the
@@ -156,7 +178,10 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
                 context,
                 RecordingService.diarizeIntent(context, sessionId)
             )
-        }
+        },
+        onSummarise = { summaryVm.summarise() },
+        onCancelSummary = { summaryVm.cancel() },
+        onOpenSettings = { navController.navigate("settings") }
     )
 }
 
@@ -174,11 +199,15 @@ internal fun SessionBody(
     lines: List<TranscriptLine>,
     speakers: List<SpeakerEntity>,
     notFound: Boolean,
+    summaryState: SummaryUiState,
     onBack: () -> Unit,
     onShare: () -> Unit,
     onRenameSpeaker: (Int, String) -> Unit,
     onRenameSession: (String) -> Unit,
-    onDiarizeAgain: () -> Unit
+    onDiarizeAgain: () -> Unit,
+    onSummarise: () -> Unit,
+    onCancelSummary: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var overflowExpanded by remember { mutableStateOf(false) }
@@ -267,6 +296,12 @@ internal fun SessionBody(
                     lines = lines,
                     speakers = speakers,
                     onSpeakerChipTapped = { index -> renameSpeakerIndex = index }
+                )
+                selectedTab == 1 -> SummaryTab(
+                    state = summaryState,
+                    onSummarise = onSummarise,
+                    onCancel = onCancelSummary,
+                    onOpenSettings = onOpenSettings
                 )
                 else -> ComingSoonTab()
             }
@@ -547,6 +582,107 @@ private fun ComingSoonTab() {
             text = stringResource(R.string.session_coming_soon),
             style = MaterialTheme.typography.bodyLarge
         )
+    }
+}
+
+/**
+ * Summary tab body. Three layouts:
+ *
+ *  - the LLM endpoint is not configured: a single line of text and
+ *    a button that navigates to the Settings screen;
+ *  - not configured: hidden behind [SummaryUiState.configured];
+ *  - running / saved / streaming / error: the streaming text or
+ *    saved summary, the action buttons and the inline error.
+ *
+ * The summary is rendered through [SelectionContainer] so the user
+ * can long-press to copy a phrase, and a `Copy` `TextButton` drops
+ * the whole answer on the system clipboard via
+ * [LocalClipboardManager]. No markdown library is involved: the
+ * raw text from the LLM is shown verbatim.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SummaryTab(
+    state: SummaryUiState,
+    onSummarise: () -> Unit,
+    onCancel: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val clipboard = LocalClipboardManager.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        if (!state.configured) {
+            Text(
+                text = stringResource(R.string.session_summary_not_configured),
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Button(onClick = onOpenSettings) {
+                Text(text = stringResource(R.string.session_summary_open_settings))
+            }
+            return
+        }
+        if (state.running) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = onCancel) {
+                    Text(text = stringResource(R.string.session_summary_stop))
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp
+                )
+            }
+            if (state.streaming.isNotEmpty()) {
+                SelectionContainer {
+                    Text(
+                        text = state.streaming,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+        } else {
+            val saved = state.saved
+            val buttonLabel = if (saved.isNullOrBlank()) {
+                R.string.session_summary_summarise
+            } else {
+                R.string.session_summary_regenerate
+            }
+            Button(onClick = onSummarise) {
+                Text(text = stringResource(buttonLabel))
+            }
+            if (saved.isNullOrBlank()) {
+                Text(
+                    text = stringResource(R.string.session_summary_empty),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            } else {
+                SelectionContainer {
+                    Text(
+                        text = saved,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+                TextButton(onClick = {
+                    clipboard.setText(AnnotatedString(saved))
+                }) {
+                    Text(text = stringResource(R.string.session_summary_copy))
+                }
+            }
+        }
+        state.error?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+            TextButton(onClick = onSummarise) {
+                Text(text = stringResource(R.string.session_summary_retry))
+            }
+        }
     }
 }
 

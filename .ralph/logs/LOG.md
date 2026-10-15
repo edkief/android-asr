@@ -1,3 +1,48 @@
+## 2026-10-15 — TASK-26: Summary tab: stream, save and regenerate the summary
+
+Added `ui/session/SummaryViewModel.kt` and the matching unit test
+`ui/session/SummaryViewModelTest.kt`. Extended
+`data/SessionRepository.kt` with three new methods —
+`observeMessages(sessionId, kind)` (alias for the existing `observeChat`),
+`addMessage(sessionId, kind, role, content)` (stamps `createdAt = now` and
+inserts), and `clearMessages(sessionId, kind)` (alias for `deleteChatKind`).
+The Summary tab replaces the previous "Coming soon" placeholder with
+`SummaryTab` in `ui/session/SessionScreen.kt`: a "Set up a language model
+endpoint in Settings" line + Open Settings button when the endpoint is not
+configured; a "Summarise" / "Regenerate" button, the streaming text or
+saved summary rendered through `SelectionContainer` with a `Copy`
+`TextButton` (using `LocalClipboardManager`), an inline error in error
+color with a "Retry" button, and a "Stop" button + spinner while the
+streaming call is in flight.
+
+`SummaryViewModel` exposes `SummaryUiState(saved, streaming, running,
+error, configured)`. `summarise()` ignores re-entry while running, builds
+the transcript through `TranscriptFormatter`, sets the
+`The transcript is empty.` error on a blank transcript (without calling
+the client), otherwise collects `chatClient.stream(PromptBuilder.summary(...))`
+appending every token to `streaming`. On completion it wipes the previous
+SUMMARY row, inserts the new ASSISTANT SUMMARY row, and resets the
+flags. `LlmException` surfaces the message verbatim in `error` and keeps
+the previous `saved` summary. `cancel()` aborts the in-flight job. The
+saved value is mirrored from the Room `chat_messages` observer so the
+screen reflects the most recent persisted SUMMARY even if the VM was
+recreated. 10 new strings (`session_summary_*`).
+
+5 new tests in `SummaryViewModelTest` (Robolectric + in-memory Room with
+synchronous query/transaction executors + fake `ChatClient` +
+`Dispatchers.setMain`): streaming `["A","B","C"]` ends with `saved ==
+"ABC"` and exactly one SUMMARY row in the DB; regenerate replaces the
+previous summary (still one row); `LlmException("HTTP 500: x")` sets
+`error` and leaves the previous saved summary intact in both state and
+DB; an empty transcript sets `error` to `The transcript is empty.` and
+records zero `stream()` calls; the messages handed to the fake equal
+`PromptBuilder.summary(transcript, maxTranscriptChars)`.
+
+Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (242 tests including 5 new, ktlint clean, lintDebug clean,
+assembleDebug succeeds).
+
 ## 2026-10-15 — TASK-25: Prompt builder and transcript truncation
 
 Added `llm/TranscriptTruncator.kt` and `llm/PromptBuilder.kt`, with tests under
