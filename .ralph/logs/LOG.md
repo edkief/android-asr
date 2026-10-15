@@ -2,6 +2,54 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-11 — RecordingController: wire audio, WAV, transcriber and database
+Added `recording/RecordingState.kt` with `enum RecordingPhase { IDLE, LOADING, RECORDING, STOPPING }`
+and `data class RecordingState(phase, sessionId, elapsedMs, partialText, finalLines,
+lastCompletedSessionId, error)`. Added `recording/RecordingStore.kt` as the persistence façade
+the controller talks to (`createSession` / `audioPath` / `addSegment` / `finishRecording`); made
+`SessionRepository` implement it with the new `audioPath(sessionId)` reading the `audioPath`
+column stamped by `createSession` (throws if the session was deleted mid-recording). Added
+`recording/RecordingController.kt`: the constructor takes `(audioSource, transcriberFactory,
+store, language, asrDispatcher, clock = System::currentTimeMillis)` and exposes `state:
+StateFlow<RecordingState>`. `start(scope)` is a no-op unless `phase == IDLE`; it sets
+`LOADING`, then launches a coroutine in `scope` that (1) builds the transcriber with
+`withContext(asrDispatcher) { transcriberFactory.create(language()) }`, (2) creates the
+session with title `"Recording yyyy-MM-dd HH:mm"`, (3) opens `WavWriter(File(store.audioPath(id)))`,
+(4) stashes the transcriber + WAV writer in fields so `stop()` can call `finish()` + `close()`,
+and (5) flips to `RECORDING`. The collector writes each chunk to the WAV, feeds it to
+`transcriber.accept(chunk.toFloatSamples())` on `asrDispatcher`, persists every `Final` via
+`store.addSegment` (suspend work is done outside the `_state.update` lambda because it isn't
+suspend), updates `partialText` / `finalLines` and refreshes `elapsedMs = samplesToMs(wav.samplesWritten)`.
+`stop()` returns `null` unless `phase == RECORDING`; otherwise it sets `STOPPING`,
+`cancelAndJoin`s the launched job, calls `transcriber.finish()` on `asrDispatcher`, closes
+both handles, calls `store.finishRecording(id, samplesToMs(wav.samplesWritten))`, publishes
+`RecordingState(phase = IDLE, lastCompletedSessionId = id)` and returns `id`. Errors in the
+launched body (except `CancellationException`) close what was opened, call
+`store.finishRecording(id, samplesToMs(wav.samplesWritten))` if a session was created, and set
+`RecordingState(phase = IDLE, error = e.message ?: "Recording failed")`.
+`consumeCompleted()` clears `lastCompletedSessionId`. `AppContainer` now builds
+`recordingController = RecordingController(MicAudioSource(), transcriberFactory, sessionRepository,
+{ settingsRepository.settings.value.asrLanguage }, Dispatchers.Default.limitedParallelism(1))`.
+Added `recording/RecordingControllerTest.kt` (plain JVM, no Robolectric): a `FakeRecordingStore`
+backed by the `TemporaryFolder` (auto-incrementing session ids, segments + finishCalls lists),
+a `ChannelAudioSource` backed by a `Channel<ShortArray>`, an `EveryThirdChunkTranscriber` that
+emits one `Final` per 3 `accept` calls (text `"line-<n>"`, timestamps `((n-3)*100, n*100)`),
+and a `FakeTranscriberFactory` that records `createCount` and optionally throws. The harness
+shares one `StandardTestDispatcher(testScheduler)` between the start scope (the test body's
+own scope — `backgroundScope` is documented to be skipped by `advanceUntilIdle` in
+kotlinx-coroutines-test 1.9.0, so the test instead uses the test body scope and calls
+`controller.stop()` at the end of each test that doesn't otherwise stop) and `asrDispatcher`,
+then calls `advanceUntilIdle()` after each step. Six tests cover: start → LOADING → RECORDING
+with sessionId + 6 chunks → 2 finals persisted and visible in `finalLines`; stop returns the id,
+phase IDLE, `lastCompletedSessionId` set, `finishRecording(id, 600)` recorded, WAV file
+exactly `44 + 6*1600*2` bytes, transcriber closed; transcriber factory throwing lands in IDLE
+with that message in `error` and no `finishRecording`; `start` called twice while RECORDING
+does not create a second session and `stop()` while IDLE returns `null`; `consumeCompleted()`
+clears `lastCompletedSessionId`; `elapsedMs` tracks `samplesToMs(samplesWritten)` accurately
+across multiple chunk rounds. Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (recording package: 6 new tests + all pre-existing 67 = 73 unit tests pass).
+
 ## 2026-10-15 — TASK-9 — Audio capture, PCM conversion, WAV writer and reader
 Added `audio/AudioFormat.kt` with `object AudioSpec { SAMPLE_RATE = 16_000, CHUNK_SAMPLES = 1_600 }`
 (suppressed the `standard:filename` ktlint rule because the spec pins the file name).

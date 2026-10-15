@@ -1,6 +1,7 @@
 package com.convoscribe.data
 
 import androidx.room.withTransaction
+import com.convoscribe.recording.RecordingStore
 import java.io.File
 import kotlinx.coroutines.flow.Flow
 
@@ -15,11 +16,16 @@ import kotlinx.coroutines.flow.Flow
  * [recordingsDir] is `filesDir/recordings`; every session points at
  * `<recordingsDir>/<id>.wav` and that file is owned by this class
  * for the lifetime of the session.
+ *
+ * Also implements [RecordingStore] so the recording controller can
+ * drive a session without taking a hard dependency on Room: the
+ * controller talks to the interface and the production wiring
+ * passes this repository.
  */
 class SessionRepository(
     private val db: AppDatabase,
     private val recordingsDir: File
-) {
+) : RecordingStore {
     private val sessionDao: SessionDao = db.sessionDao()
     private val segmentDao: SegmentDao = db.segmentDao()
     private val speakerDao: SpeakerDao = db.speakerDao()
@@ -33,7 +39,7 @@ class SessionRepository(
      * primary key. The returned id is what the recorder uses to
      * create the WAV file.
      */
-    suspend fun createSession(title: String, language: String): Long {
+    override suspend fun createSession(title: String, language: String): Long {
         val now = System.currentTimeMillis()
         val id = sessionDao.insert(
             SessionEntity(
@@ -61,21 +67,22 @@ class SessionRepository(
      * Append a transcript segment. Called by the ASR engine as
      * endpoints are detected. Returns the new segment id.
      */
-    suspend fun addSegment(sessionId: Long, startMs: Long, endMs: Long, text: String): Long = segmentDao.insert(
-        SegmentEntity(
-            sessionId = sessionId,
-            startMs = startMs,
-            endMs = endMs,
-            text = text
+    override suspend fun addSegment(sessionId: Long, startMs: Long, endMs: Long, text: String): Long =
+        segmentDao.insert(
+            SegmentEntity(
+                sessionId = sessionId,
+                startMs = startMs,
+                endMs = endMs,
+                text = text
+            )
         )
-    )
 
     /**
      * Recording finished. Stamp the duration and move the session
      * to [SessionStatus.TRANSCRIBED] so the diarization worker picks
      * it up.
      */
-    suspend fun finishRecording(sessionId: Long, durationMs: Long) {
+    override suspend fun finishRecording(sessionId: Long, durationMs: Long) {
         sessionDao.get(sessionId)?.let { row ->
             sessionDao.update(
                 row.copy(
@@ -84,6 +91,21 @@ class SessionRepository(
                 )
             )
         }
+    }
+
+    /**
+     * Look up the WAV path the recorder should write to for
+     * [sessionId]. Returns the `audioPath` column stamped by
+     * [createSession]. Throws [IllegalStateException] if the
+     * session is unknown: that should never happen because the
+     * recorder only calls this with an id returned by
+     * [createSession] moments earlier, and we want a loud failure
+     * instead of a silent default.
+     */
+    override suspend fun audioPath(sessionId: Long): String {
+        val row = sessionDao.get(sessionId)
+            ?: error("No session row for id $sessionId; was it deleted mid-recording?")
+        return row.audioPath
     }
 
     /**

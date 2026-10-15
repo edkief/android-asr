@@ -3,11 +3,13 @@ package com.convoscribe
 import android.content.Context
 import androidx.room.Room
 import com.convoscribe.asr.TranscriberFactory
+import com.convoscribe.audio.MicAudioSource
 import com.convoscribe.data.AppDatabase
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.engine.sherpa.SherpaTranscriberFactory
 import com.convoscribe.models.ModelDownloader
 import com.convoscribe.models.ModelStore
+import com.convoscribe.recording.RecordingController
 import com.convoscribe.settings.EncryptedSecretStore
 import com.convoscribe.settings.SettingsRepository
 import java.io.File
@@ -91,5 +93,23 @@ class AppContainer(val context: Context) {
     val transcriberFactory: TranscriberFactory = SherpaTranscriberFactory(
         store = modelStore,
         settings = settingsRepository
+    )
+
+    /**
+     * Drives a recording session: opens the mic, writes the WAV,
+     * feeds the streaming ASR and persists each closed utterance
+     * as it arrives. The screen (TASK-12) and the foreground
+     * service (TASK-13) call [RecordingController.start] /
+     * [RecordingController.stop]; they observe the live state
+     * through [RecordingController.state]. A single-threaded
+     * `limitedParallelism(1)` dispatcher keeps the recognizer's
+     * native state sequential, matching the sherpa-onnx contract.
+     */
+    val recordingController: RecordingController = RecordingController(
+        audioSource = MicAudioSource(),
+        transcriberFactory = transcriberFactory,
+        store = sessionRepository,
+        language = { settingsRepository.settings.value.asrLanguage },
+        asrDispatcher = Dispatchers.Default.limitedParallelism(1)
     )
 }
