@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * Snapshot rendered by [SessionScreen]. Built by combining the
@@ -99,4 +100,34 @@ class SessionViewModel(
      * chooser would receive anyway on a not-found session.
      */
     fun transcriptText(): String = TranscriptFormatter.toText(uiState.value.lines)
+
+    /**
+     * Persist a new label for the speaker identified by
+     * [index]. Delegates to [SessionRepository.renameSpeaker] on
+     * [viewModelScope] so the screen can fire-and-forget from a
+     * dialog callback. The repository trims the label and
+     * ignores blank values, so the UI does not need to.
+     * The speakers flow Room observes will re-emit, and the
+     * `combine` block above will rebuild the transcript lines
+     * with the new label automatically.
+     */
+    fun renameSpeaker(index: Int, label: String) {
+        viewModelScope.launch {
+            repository.renameSpeaker(sessionId = sessionId, speakerIndex = index, label = label)
+        }
+    }
+
+    /**
+     * Persist a new title for this session. Delegates to
+     * [SessionRepository.renameSession] on [viewModelScope]. The
+     * repository trims, ignores blanks and caps at
+     * [SessionRepository.SESSION_TITLE_MAX_LEN]; the session
+     * row's flow Room observes will re-emit so the top bar
+     * title updates without any extra plumbing.
+     */
+    fun renameSession(title: String) {
+        viewModelScope.launch {
+            repository.renameSession(sessionId = sessionId, title = title)
+        }
+    }
 }

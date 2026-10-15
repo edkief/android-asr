@@ -71,4 +71,12 @@
     <string name="session_transcript_empty">No speech was recognised.</string>
     <string name="session_coming_soon">Coming soon</string>
     <string name="session_not_found">Session not found.</string>
+    <string name="session_overflow">More</string>
+    <string name="session_overflow_rename">Rename session</string>
+    <string name="session_overflow_diarize">Detect speakers again</string>
+    <string name="session_rename_speaker_title">Rename speaker</string>
+    <string name="session_rename_session_title">Rename session</string>
+    <string name="session_rename_label">Name</string>
+    <string name="session_rename_save">Save</string>
+    <string name="session_rename_cancel">Cancel</string>
 </resources>

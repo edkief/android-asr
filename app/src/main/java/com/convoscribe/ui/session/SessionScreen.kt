@@ -1,6 +1,7 @@
 package com.convoscribe.ui.session
 
 import android.content.Intent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,23 +12,34 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -37,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -45,7 +58,9 @@ import androidx.navigation.NavHostController
 import com.convoscribe.ConvoApp
 import com.convoscribe.R
 import com.convoscribe.data.SessionStatus
+import com.convoscribe.data.SpeakerEntity
 import com.convoscribe.data.TranscriptLine
+import com.convoscribe.service.RecordingService
 
 /**
  * Fixed 6-entry palette used to tint speaker labels by their
@@ -107,6 +122,7 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
         title = state.title,
         status = state.status,
         lines = state.lines,
+        speakers = state.speakers,
         notFound = state.notFound,
         onBack = { navController.popBackStack() },
         onShare = {
@@ -125,6 +141,21 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
                 }
                 context.startActivity(Intent.createChooser(send, null))
             }
+        },
+        onRenameSpeaker = { index, label -> vm.renameSpeaker(index, label) },
+        onRenameSession = { title -> vm.renameSession(title) },
+        onDiarizeAgain = {
+            // Hand off to the foreground service, which
+            // promotes itself to `dataSync` while the
+            // diarizer runs. The status banner already
+            // picks up the DIARIZING flip the
+            // use case writes, so the screen mirrors
+            // the work without having to track it
+            // locally.
+            ContextCompat.startForegroundService(
+                context,
+                RecordingService.diarizeIntent(context, sessionId)
+            )
         }
     )
 }
@@ -141,11 +172,22 @@ internal fun SessionBody(
     title: String,
     status: SessionStatus?,
     lines: List<TranscriptLine>,
+    speakers: List<SpeakerEntity>,
     notFound: Boolean,
     onBack: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onRenameSpeaker: (Int, String) -> Unit,
+    onRenameSession: (String) -> Unit,
+    onDiarizeAgain: () -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var overflowExpanded by remember { mutableStateOf(false) }
+    // The two rename flows share a dialog shell but different
+    // pre-fill / save targets. `renameSpeakerIndex = null` means
+    // we're editing the session title; otherwise the non-null
+    // index is the speaker we're renaming.
+    var renameSpeakerIndex by remember { mutableStateOf<Int?>(null) }
+    var renameSessionOpen by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -163,6 +205,33 @@ internal fun SessionBody(
                         Icon(
                             imageVector = Icons.Filled.Share,
                             contentDescription = stringResource(R.string.session_share)
+                        )
+                    }
+                    IconButton(onClick = { overflowExpanded = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = stringResource(R.string.session_overflow)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = overflowExpanded,
+                        onDismissRequest = { overflowExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(text = stringResource(R.string.session_overflow_rename)) },
+                            onClick = {
+                                overflowExpanded = false
+                                renameSessionOpen = true
+                            }
+                        )
+                        val canDiarize = status != SessionStatus.DIARIZING && status != SessionStatus.RECORDING
+                        DropdownMenuItem(
+                            text = { Text(text = stringResource(R.string.session_overflow_diarize)) },
+                            enabled = canDiarize,
+                            onClick = {
+                                overflowExpanded = false
+                                onDiarizeAgain()
+                            }
                         )
                     }
                 }
@@ -193,11 +262,83 @@ internal fun SessionBody(
             }
             when {
                 notFound -> SessionNotFound()
-                selectedTab == 0 -> TranscriptTab(status = status, lines = lines)
+                selectedTab == 0 -> TranscriptTab(
+                    status = status,
+                    lines = lines,
+                    speakers = speakers,
+                    onSpeakerChipTapped = { index -> renameSpeakerIndex = index }
+                )
                 else -> ComingSoonTab()
             }
         }
     }
+
+    // Rename-a-speaker dialog. `renameSpeakerIndex == null`
+    // means the dialog is closed. We snapshot the speaker at
+    // open-time so cancelling and re-opening starts fresh.
+    renameSpeakerIndex?.let { idx ->
+        val current = speakers.firstOrNull { it.speakerIndex == idx }?.label.orEmpty()
+        RenameDialog(
+            initialValue = current,
+            titleRes = R.string.session_rename_speaker_title,
+            onConfirm = { newLabel ->
+                onRenameSpeaker(idx, newLabel)
+                renameSpeakerIndex = null
+            },
+            onDismiss = { renameSpeakerIndex = null }
+        )
+    }
+    // Rename-the-session dialog.
+    if (renameSessionOpen) {
+        RenameDialog(
+            initialValue = title,
+            titleRes = R.string.session_rename_session_title,
+            onConfirm = { newTitle ->
+                onRenameSession(newTitle)
+                renameSessionOpen = false
+            },
+            onDismiss = { renameSessionOpen = false }
+        )
+    }
+}
+
+/**
+ * Reusable rename dialog used for both the speaker and session
+ * rename flows. Pre-fills with [initialValue], commits through
+ * [onConfirm] on Save, and discards on Cancel. Empty inputs
+ * disable the Save button so the user cannot accidentally blank
+ * out a label (the repository also defends against this, but the
+ * UI gate gives immediate feedback).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RenameDialog(initialValue: String, titleRes: Int, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by rememberSaveable(initialValue) { mutableStateOf(initialValue) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(titleRes)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                label = { Text(text = stringResource(R.string.session_rename_label)) }
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = text.isNotBlank(),
+                onClick = { onConfirm(text) }
+            ) {
+                Text(text = stringResource(R.string.session_rename_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.session_rename_cancel))
+            }
+        }
+    )
 }
 
 /**
@@ -241,12 +382,25 @@ private fun StatusBanner(status: SessionStatus?) {
  * speaker index, looking up the index on the in-memory list of
  * speakers so renames do not break the colour assignment) and the
  * text in `bodyLarge`.
+ *
+ * When the session has at least one speaker, a row of
+ * [AssistChip]s above the transcript lets the user jump
+ * straight to the rename dialog for that speaker — the same
+ * dialog as the per-line tap.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TranscriptTab(status: SessionStatus?, lines: List<TranscriptLine>) {
+private fun TranscriptTab(
+    status: SessionStatus?,
+    lines: List<TranscriptLine>,
+    speakers: List<SpeakerEntity>,
+    onSpeakerChipTapped: (Int) -> Unit
+) {
     Column(modifier = Modifier.fillMaxSize()) {
         StatusBanner(status = status)
+        if (speakers.isNotEmpty()) {
+            SpeakerChipRow(speakers = speakers, onChipTapped = onSpeakerChipTapped)
+        }
         if (lines.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -267,9 +421,45 @@ private fun TranscriptTab(status: SessionStatus?, lines: List<TranscriptLine>) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(items = lines, key = { it.startMs.toString() + "-" + it.text.hashCode() }) { line ->
-                    TranscriptRow(line = line)
+                    TranscriptRow(line = line, onLabelTapped = { speaker ->
+                        val idx = speakers.firstOrNull { it.label == speaker }?.speakerIndex
+                        if (idx != null) onSpeakerChipTapped(idx)
+                    })
                 }
             }
+        }
+    }
+}
+
+/**
+ * Horizontally scrollable strip of speaker [AssistChip]s. Each
+ * chip is tinted with the same palette colour used by the
+ * transcript row labels, so the user can match a chip to its
+ * lines at a glance.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SpeakerChipRow(speakers: List<SpeakerEntity>, onChipTapped: (Int) -> Unit) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(items = speakers, key = { it.speakerIndex }) { speaker ->
+            val paletteColor = speakerColorByIndex(speaker.speakerIndex)
+            AssistChip(
+                onClick = { onChipTapped(speaker.speakerIndex) },
+                label = { Text(text = speaker.label) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = null,
+                        tint = paletteColor,
+                        modifier = Modifier.height(AssistChipDefaults.IconSize)
+                    )
+                }
+            )
         }
     }
 }
@@ -281,10 +471,11 @@ private fun TranscriptTab(status: SessionStatus?, lines: List<TranscriptLine>) {
  * segments labelled "Alice" share the same colour, but the
  * primary signal is still the speaker index. The `labelMedium`
  * metadata line shows `"00:03 · Speaker 1"` or just `"00:03"` when
- * the segment is unlabelled.
+ * the segment is unlabelled. Tapping the label opens the rename
+ * dialog for the matching speaker (when there is one).
  */
 @Composable
-private fun TranscriptRow(line: TranscriptLine) {
+private fun TranscriptRow(line: TranscriptLine, onLabelTapped: (String) -> Unit) {
     val paletteColor = speakerColor(line.speaker)
     val timestamp = remember(line.startMs) { com.convoscribe.data.TranscriptFormatter.timestamp(line.startMs) }
     val labelText = if (line.speaker.isNullOrEmpty()) {
@@ -292,14 +483,21 @@ private fun TranscriptRow(line: TranscriptLine) {
     } else {
         "$timestamp · ${line.speaker}"
     }
+    val speaker = line.speaker
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
+        val labelModifier = if (speaker.isNullOrEmpty()) {
+            Modifier
+        } else {
+            Modifier.clickable { onLabelTapped(speaker) }
+        }
         Text(
             text = labelText,
             style = MaterialTheme.typography.labelMedium,
-            color = paletteColor
+            color = paletteColor,
+            modifier = labelModifier
         )
         Text(
             text = line.text,
@@ -318,6 +516,18 @@ private fun TranscriptRow(line: TranscriptLine) {
 private fun speakerColor(speaker: String?): Color {
     if (speaker.isNullOrEmpty()) return Color.Unspecified
     val idx = (speaker.hashCode() and Int.MAX_VALUE) % SPEAKER_PALETTE.size
+    return SPEAKER_PALETTE[idx]
+}
+
+/**
+ * Palette colour for a chip row keyed on the 0-based speaker
+ * index. Unlike [speakerColor], this one is stable across
+ * renames by design — the user can rename "Speaker 1" to "Alice"
+ * and the chip (and the matching transcript labels) still share
+ * the same blue. Used by [SpeakerChipRow].
+ */
+private fun speakerColorByIndex(speakerIndex: Int): Color {
+    val idx = (speakerIndex.toLong() and Int.MAX_VALUE.toLong()).toInt() % SPEAKER_PALETTE.size
     return SPEAKER_PALETTE[idx]
 }
 

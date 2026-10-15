@@ -149,8 +149,40 @@ class SessionRepository(
 
     suspend fun setSegmentSpeaker(segmentId: Long, speakerIndex: Int?) = segmentDao.setSpeaker(segmentId, speakerIndex)
 
-    suspend fun renameSpeaker(sessionId: Long, speakerIndex: Int, label: String) =
-        speakerDao.rename(sessionId, speakerIndex, label)
+    /**
+     * Rename the speaker identified by [speakerIndex] within
+     * [sessionId]. The label is trimmed and a blank result is
+     * ignored — the existing label stays in place so the user
+     * cannot accidentally blank out a speaker. The DAO's
+     * `UPDATE` is a no-op for an unknown (sessionId, index)
+     * pair, which is the behaviour we want: renaming a speaker
+     * the diarizer never produced must not throw.
+     */
+    suspend fun renameSpeaker(sessionId: Long, speakerIndex: Int, label: String) {
+        val trimmed = label.trim()
+        if (trimmed.isEmpty()) return
+        speakerDao.rename(sessionId, speakerIndex, trimmed)
+    }
+
+    /**
+     * Rename the session. The new title is trimmed, blanks are
+     * ignored (the existing title is kept), and titles longer
+     * than 100 characters are truncated to the first 100
+     * characters — long enough for a meaningful label, short
+     * enough to fit the home-screen list row. Unknown ids are a
+     * no-op because the DAO's `UPDATE` does nothing on a missing
+     * row.
+     */
+    suspend fun renameSession(sessionId: Long, title: String) {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
+        val capped = if (trimmed.length > SESSION_TITLE_MAX_LEN) {
+            trimmed.substring(0, SESSION_TITLE_MAX_LEN)
+        } else {
+            trimmed
+        }
+        sessionDao.rename(sessionId, capped)
+    }
 
     /**
      * Flip [id]'s status to [status]. Used by the diarization use
@@ -217,5 +249,17 @@ class SessionRepository(
             }
             sessionDao.setStatus(sessionId, SessionStatus.DIARIZED)
         }
+    }
+
+    companion object {
+        /**
+         * Upper bound on the user-editable session title. Long
+         * enough for a meaningful label (most call this a meeting
+         * name or a one-line summary), short enough to fit the
+         * home-screen row without ellipsising every entry.
+         * Applied by [renameSession] so the DAO never has to
+         * worry about caps.
+         */
+        const val SESSION_TITLE_MAX_LEN: Int = 100
     }
 }

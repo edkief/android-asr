@@ -196,4 +196,49 @@ class SessionViewModelTest {
         val failedState = failedVm.uiState.first { it.status == SessionStatus.DIARIZATION_FAILED }
         assertEquals(SessionStatus.DIARIZATION_FAILED, failedState.status)
     }
+
+    @Test
+    fun renameSpeaker_updatesLinesLabel() = runTest(dispatcher) {
+        val id = repo.createSession(title = "rename", language = "en")
+        repo.addSegment(sessionId = id, startMs = 0, endMs = 1_000, text = "Hello")
+        val segments = repo.getSegments(id)
+        repo.applyDiarization(
+            sessionId = id,
+            assignments = mapOf(segments[0].id to 0),
+            speakerCount = 1
+        )
+
+        val vm = SessionViewModel(sessionId = id, repository = repo)
+        // Wait for the default label to land.
+        vm.uiState.first { it.lines.size == 1 && it.lines[0].speaker == "Speaker 1" }
+
+        // Rename through the ViewModel — this is the path the
+        // screen exercises. Surrounding whitespace must not
+        // survive; the speakers flow re-emits with "Alice".
+        vm.renameSpeaker(index = 0, label = "  Alice ")
+        val state = vm.uiState.first { it.lines[0].speaker == "Alice" }
+        assertEquals("Alice", state.lines[0].speaker)
+    }
+
+    @Test
+    fun renameSession_updatesTitle() = runTest(dispatcher) {
+        val id = repo.createSession(title = "before", language = "en")
+        repo.addSegment(sessionId = id, startMs = 0, endMs = 1_000, text = "x")
+        val segments = repo.getSegments(id)
+        repo.applyDiarization(
+            sessionId = id,
+            assignments = mapOf(segments[0].id to 0),
+            speakerCount = 1
+        )
+
+        val vm = SessionViewModel(sessionId = id, repository = repo)
+        vm.uiState.first { it.title == "before" }
+
+        // Same trim rule as the repository — the ViewModel
+        // delegates the validation, so the test only has to
+        // prove the round-trip.
+        vm.renameSession(title = "  Standup  ")
+        val state = vm.uiState.first { it.title == "Standup" }
+        assertEquals("Standup", state.title)
+    }
 }

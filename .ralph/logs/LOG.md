@@ -2,6 +2,60 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-22 — Rename speakers and session title; re-run speaker detection
+
+Let users replace "Speaker N" with real names, rename the session, and re-run diarization.
+
+**Repository** (`data/SessionRepository.kt`, `data/SessionDao.kt`):
+* New `SessionDao.rename(id, title)` `@Query("UPDATE sessions SET title = :title WHERE id = :id")`.
+* `SessionRepository.renameSpeaker` now trims and ignores blank labels (was a one-line pass-through).
+* New `SessionRepository.renameSession(sessionId, title)`: trim → blank ignored → cap at
+  `SessionRepository.SESSION_TITLE_MAX_LEN = 100`. Title stored in companion object so tests can
+  reference it.
+* New constant `companion object { const val SESSION_TITLE_MAX_LEN: Int = 100 }` on the repository.
+
+**ViewModel** (`ui/session/SessionViewModel.kt`):
+* Added `fun renameSpeaker(index: Int, label: String)` and `fun renameSession(title: String)`, both
+  delegated to the repository on `viewModelScope.launch { … }`. The Room flows re-emit, the
+  `combine` block re-builds `SessionUiState` with the new label / title, and the screen
+  recomposes — no screen-side plumbing.
+
+**Screen** (`ui/session/SessionScreen.kt`, `res/values/strings.xml`):
+* Added a third top-bar action (`Icons.Filled.MoreVert`) opening a `DropdownMenu` with two items:
+  * **Rename session** opens the rename dialog seeded with the current title.
+  * **Detect speakers again** calls `ContextCompat.startForegroundService(context,
+    RecordingService.diarizeIntent(context, sessionId))`; disabled while the session is
+    `DIARIZING` or `RECORDING`.
+* Reusable `RenameDialog(initialValue, titleRes, onConfirm, onDismiss)` builds an `AlertDialog`
+  with an `OutlinedTextField` (single-line, "Name" label) prefilled with `initialValue` and
+  `Save` / `Cancel` buttons. `Save` is disabled while the input is blank so the user gets UI-level
+  feedback that blanks will not commit (the repository also defends against blanks).
+* Transcript-row labels are now `Modifier.clickable { onLabelTapped(speaker) }` — tapping a label
+  opens the same dialog for the matching speaker index. Unlabelled segments stay un-clickable.
+* New `SpeakerChipRow` above the transcript renders a horizontal `LazyRow` of `AssistChip`s
+  (one per speaker, leading icon tinted with the same palette colour used for transcript labels).
+  Tapping a chip opens the rename dialog for that speaker.
+
+**Strings** (`res/values/strings.xml`): added 9 new keys
+(`session_overflow`, `session_overflow_rename`, `session_overflow_diarize`,
+`session_rename_speaker_title`, `session_rename_session_title`, `session_rename_label`,
+`session_rename_save`, `session_rename_cancel`, `session_overflow`).
+
+**Tests** (`app/src/test/java/com/convoscribe/`):
+* `data/SessionRepositoryTest` (+5 tests, now 14 total): `renameSpeaker_trimsLabel`,
+  `renameSpeaker_blankLabelIsIgnored` (covers both `""` and `"   "`),
+  `renameSpeaker_unknownIndexIsNoOp` (rename on a missing index is a silent no-op),
+  `renameSession_trimsAndTruncates` (200-char input lands as the first 100 chars), and
+  `renameSession_blankTitleIsIgnored`.
+* `ui/session/SessionViewModelTest` (+2 tests, now 9 total): `renameSpeaker_updatesLinesLabel`
+  (drives the rename through `vm.renameSpeaker(index, "  Alice ")` and waits for the flow to
+  re-emit with `Alice` in `lines[0].speaker`), and `renameSession_updatesTitle` (same round-trip
+  for the title).
+
+Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (all unit tests pass, ktlint clean, lintDebug clean, `assembleDebug` succeeds).
+
 ## 2026-10-15 — TASK-20 — Home screen: session list with status and delete
 
 Added `ui/home/HomeViewModel.kt`: `data class SessionRow(id, title, subtitle, status)` and `class HomeViewModel(repository: SessionRepository)` exposing `val sessions: StateFlow<List<SessionRow>> = repository.observeAllSessions().map { it.toRow() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())` and `fun delete(id)` that launches `repository.deleteSession(id)`. Pure top-level `fun sessionSubtitle(createdAt: Long, durationMs: Long, status: SessionStatus, zone: ZoneId = ZoneId.systemDefault()): String` formats `LocalDateTime.ofInstant(Instant.ofEpochMilli(createdAt), zone)` with `DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.UK)`, appends `" · mm:ss"` (or `" · h:mm:ss"` past an hour; nothing when `durationMs <= 0`), then `" · Recording…"` / `" · Identifying speakers…"` / `" · Speaker detection failed"` for `RECORDING` / `DIARIZING` / `DIARIZATION_FAILED` (nothing for `TRANSCRIBED` / `DIARIZED`).

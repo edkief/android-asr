@@ -236,4 +236,81 @@ class SessionRepositoryTest {
         val all = repo.observeAllSessions().first()
         assertEquals(listOf(id3, id2, id1), all.map { it.id })
     }
+
+    @Test
+    fun renameSpeaker_trimsLabel() = runTest {
+        val id = repo.createSession(title = "trim", language = "en")
+        val segId = repo.addSegment(id, startMs = 0, endMs = 1_000, text = "x")
+        repo.applyDiarization(
+            sessionId = id,
+            assignments = mapOf(segId to 0),
+            speakerCount = 2
+        )
+
+        // Surrounding whitespace must not survive the rename —
+        // "  Alice " should land as "Alice" in the row.
+        repo.renameSpeaker(sessionId = id, speakerIndex = 0, label = "  Alice ")
+        assertEquals("Alice", repo.getSpeakers(id)[0].label)
+
+        // The other speaker is untouched.
+        assertEquals("Speaker 2", repo.getSpeakers(id)[1].label)
+    }
+
+    @Test
+    fun renameSpeaker_blankLabelIsIgnored() = runTest {
+        val id = repo.createSession(title = "blank", language = "en")
+        val segId = repo.addSegment(id, startMs = 0, endMs = 1_000, text = "x")
+        repo.applyDiarization(
+            sessionId = id,
+            assignments = mapOf(segId to 0),
+            speakerCount = 1
+        )
+
+        // A blank (or whitespace-only) label must not overwrite
+        // the existing one — otherwise the user could
+        // accidentally blank out a speaker by hitting Save with
+        // an empty field.
+        repo.renameSpeaker(sessionId = id, speakerIndex = 0, label = "")
+        assertEquals("Speaker 1", repo.getSpeakers(id)[0].label)
+
+        repo.renameSpeaker(sessionId = id, speakerIndex = 0, label = "   ")
+        assertEquals("Speaker 1", repo.getSpeakers(id)[0].label)
+    }
+
+    @Test
+    fun renameSpeaker_unknownIndexIsNoOp() = runTest {
+        val id = repo.createSession(title = "noop", language = "en")
+        // No diarization — there is no speaker row 5 to rename.
+        repo.renameSpeaker(sessionId = id, speakerIndex = 5, label = "Bob")
+        assertTrue(repo.getSpeakers(id).isEmpty())
+    }
+
+    @Test
+    fun renameSession_trimsAndTruncates() = runTest {
+        val id = repo.createSession(title = "initial", language = "en")
+
+        // Trim: surrounding whitespace must not survive.
+        repo.renameSession(sessionId = id, title = "  Standup  ")
+        assertEquals("Standup", repo.getSession(id)!!.title)
+
+        // Truncate: a 200-character title is capped at the
+        // repository's SESSION_TITLE_MAX_LEN (100). The original
+        // substring is preserved so the visible prefix is
+        // meaningful — truncation is a hard slice, not a "…".
+        val longTitle = "a".repeat(200)
+        repo.renameSession(sessionId = id, title = longTitle)
+        val stored = repo.getSession(id)!!.title
+        assertEquals(SessionRepository.SESSION_TITLE_MAX_LEN, stored.length)
+        assertEquals(longTitle.substring(0, SessionRepository.SESSION_TITLE_MAX_LEN), stored)
+    }
+
+    @Test
+    fun renameSession_blankTitleIsIgnored() = runTest {
+        val id = repo.createSession(title = "keep", language = "en")
+        repo.renameSession(sessionId = id, title = "")
+        assertEquals("keep", repo.getSession(id)!!.title)
+
+        repo.renameSession(sessionId = id, title = "   ")
+        assertEquals("keep", repo.getSession(id)!!.title)
+    }
 }

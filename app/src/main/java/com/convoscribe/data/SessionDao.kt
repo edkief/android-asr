@@ -54,4 +54,13 @@ interface SessionDao {
      */
     @Query("UPDATE sessions SET durationMs = :durationMs WHERE id = :id")
     suspend fun updateDuration(id: Long, durationMs: Long)
+
+    /**
+     * Update the user-visible [title] of a session. Called by the
+     * session-detail screen's "Rename session" menu; the
+     * repository enforces the 100-character cap so the DAO stays
+     * free of business rules.
+     */
+    @Query("UPDATE sessions SET title = :title WHERE id = :id")
+    suspend fun rename(id: Long, title: String)
 }
