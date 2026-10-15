@@ -1,3 +1,12 @@
 .ralph/history/
 .playwright-mcp/
 .playwright-cli/
+.gradle/
+build/
+**/build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+app/libs/*.aar
+captures/
