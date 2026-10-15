@@ -1,0 +1,239 @@
+package com.convoscribe.llm
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Unit tests for [PromptBuilder].
+ *
+ * The tests pin two contracts:
+ *  - [PromptBuilder.summary] returns a 2-message list (system +
+ *    user) and the user message starts with the literal
+ *    `Transcript:` so the model sees the raw text after the
+ *    instructions;
+ *  - [PromptBuilder.question] returns a system + history + user
+ *    list where the history is the last six user/assistant turns
+ *    only (any non-user/assistant role is filtered out) and the
+ *    last message is the trimmed question with role `user`.
+ *
+ * The exact text of [PromptBuilder.SUMMARY_SYSTEM] and
+ * [PromptBuilder.QA_SYSTEM_PREFIX] is part of the contract with
+ * the model — changes there change what the user sees on the
+ * Summary and Q&A screens — so the constants are also asserted
+ * here.
+ */
+class PromptBuilderTest {
+
+    @Test
+    fun summarySystemPromptMatchesSpecExactly() {
+        // Changing this text changes what the user sees on the
+        // Summary screen; the assertion guards against accidental
+        // edits to SUMMARY_SYSTEM.
+        assertEquals(
+            "You summarise conversation transcripts. Write in the same language as the transcript. " +
+                "Use this structure:\n" +
+                "1. Overview: one short paragraph.\n" +
+                "2. Key points: bullet list.\n" +
+                "3. Decisions: bullet list, or \"None\".\n" +
+                "4. Action items: bullet list with the owner's name when known, or \"None\".\n" +
+                "Use the speaker names exactly as they appear. " +
+                "Do not invent facts that are not in the transcript.",
+            PromptBuilder.SUMMARY_SYSTEM
+        )
+    }
+
+    @Test
+    fun qaSystemPromptPrefixMatchesSpecExactly() {
+        // Same contract as above for the Q&A flow.
+        assertEquals(
+            "You answer questions about the conversation transcript below. " +
+                "Answer only from the transcript; if the answer is not in it, " +
+                "say that it is not in the transcript. " +
+                "Answer in the language of the question. " +
+                "Cite timestamps like [12:34] when useful.\n\nTranscript:\n",
+            PromptBuilder.QA_SYSTEM_PREFIX
+        )
+    }
+
+    @Test
+    fun summary_returnsTwoMessagesSystemThenUserStartingWithTranscript() {
+        val transcript = "Alice: hello\nBob: hi\n"
+        val messages: List<LlmMessage> = PromptBuilder.summary(transcript, 1_000)
+
+        assertEquals(2, messages.size)
+        assertEquals(LlmMessage.ROLE_SYSTEM, messages[0].role)
+        assertEquals(PromptBuilder.SUMMARY_SYSTEM, messages[0].content)
+        assertEquals(LlmMessage.ROLE_USER, messages[1].role)
+        assertTrue(
+            "user message must start with 'Transcript:' (was: ${messages[1].content.take(40)})",
+            messages[1].content.startsWith("Transcript:")
+        )
+        // The fitted transcript lands right after the header.
+        assertTrue(
+            "user message must contain the transcript body (was: ${messages[1].content})",
+            messages[1].content.contains(transcript)
+        )
+    }
+
+    @Test
+    fun summary_passesTranscriptThroughTruncatorWhenOversized() {
+        // 100 chars * 100 lines = ~10 000 chars; budget 1 000 must
+        // force the truncator to insert the marker.
+        val transcript: String = buildString {
+            for (i in 1..100) {
+                append("L%03d:".format(i))
+                append("x".repeat(94))
+                append('\n')
+            }
+        }
+        val messages: List<LlmMessage> = PromptBuilder.summary(transcript, 1_000)
+        assertEquals(2, messages.size)
+        assertTrue(
+            "oversized transcript must be truncated (was length ${messages[1].content.length})",
+            messages[1].content.contains("characters omitted")
+        )
+        assertTrue(
+            "user body must still start with 'Transcript:'",
+            messages[1].content.startsWith("Transcript:")
+        )
+    }
+
+    @Test
+    fun question_keepsOnlyLastSixUserAssistantMessagesAndTrimsQuestion() {
+        val transcript = "Alice: hello\nBob: hi\n"
+        val history: List<LlmMessage> = (1..10).map { i ->
+            // Alternate roles and pad with extra junk to detect any
+            // accidental inclusion of a non-user/assistant role.
+            when (i % 2) {
+                1 -> LlmMessage(LlmMessage.ROLE_USER, "u$i")
+                else -> LlmMessage(LlmMessage.ROLE_ASSISTANT, "a$i")
+            }
+        }
+
+        val messages: List<LlmMessage> = PromptBuilder.question(
+            transcript = transcript,
+            maxChars = 1_000,
+            history = history,
+            question = "   what did Alice say?   "
+        )
+
+        // system + 6 history messages + final question = 8 messages.
+        assertEquals(8, messages.size)
+
+        // 1. system message wraps the transcript.
+        assertEquals(LlmMessage.ROLE_SYSTEM, messages[0].role)
+        assertTrue(
+            "system message must start with the QA prefix",
+            messages[0].content.startsWith(PromptBuilder.QA_SYSTEM_PREFIX)
+        )
+        assertTrue(
+            "system message must contain the transcript",
+            messages[0].content.contains(transcript)
+        )
+
+        // 2. the last six history entries are user/assistant turns
+        //    in their original order; entries u1..u4 / a1..a4 are
+        //    NOT in the output because only the last six survive.
+        val historyWindow: List<LlmMessage> = messages.subList(1, 7)
+        assertEquals(history.takeLast(6), historyWindow)
+        historyWindow.forEach { msg ->
+            assertTrue(
+                "history window must contain only user/assistant (was: ${msg.role})",
+                msg.role == LlmMessage.ROLE_USER ||
+                    msg.role == LlmMessage.ROLE_ASSISTANT
+            )
+        }
+
+        // 3. final message is the trimmed question with role user.
+        val last: LlmMessage = messages.last()
+        assertEquals(LlmMessage.ROLE_USER, last.role)
+        assertEquals("what did Alice say?", last.content)
+    }
+
+    @Test
+    fun question_filtersOutNonUserAssistantHistoryMessagesBeforeTrimming() {
+        val transcript = "Alice: hello\n"
+        val history: List<LlmMessage> = listOf(
+            // Imagine a future "tool" or "developer" role sneaking
+            // in via an upstream change: the prompt builder must
+            // drop it before the size cap.
+            LlmMessage("developer", "system override"),
+            LlmMessage(LlmMessage.ROLE_USER, "u1"),
+            LlmMessage(LlmMessage.ROLE_ASSISTANT, "a1"),
+            LlmMessage("tool", "tool result"),
+            LlmMessage(LlmMessage.ROLE_USER, "u2"),
+            LlmMessage(LlmMessage.ROLE_ASSISTANT, "a2"),
+            LlmMessage("system", "another system"),
+            LlmMessage(LlmMessage.ROLE_USER, "u3"),
+            LlmMessage(LlmMessage.ROLE_ASSISTANT, "a3")
+        )
+
+        val messages: List<LlmMessage> = PromptBuilder.question(
+            transcript = transcript,
+            maxChars = 1_000,
+            history = history,
+            question = "ping"
+        )
+
+        // system + 6 surviving (u1, a1, u2, a2, u3, a3) + question = 8.
+        assertEquals(8, messages.size)
+        val historyWindow: List<LlmMessage> = messages.subList(1, 7)
+        assertEquals(
+            listOf("u1", "a1", "u2", "a2", "u3", "a3"),
+            historyWindow.map { it.content }
+        )
+        assertEquals(LlmMessage.ROLE_USER, messages.last().role)
+        assertEquals("ping", messages.last().content)
+    }
+
+    @Test
+    fun question_handlesShorterHistoryWithoutPadding() {
+        val transcript = "Alice: hello\n"
+        val history: List<LlmMessage> = listOf(
+            LlmMessage(LlmMessage.ROLE_USER, "u1"),
+            LlmMessage(LlmMessage.ROLE_ASSISTANT, "a1")
+        )
+
+        val messages: List<LlmMessage> = PromptBuilder.question(
+            transcript = transcript,
+            maxChars = 1_000,
+            history = history,
+            question = "?"
+        )
+
+        // system + 2 history + question = 4 messages; the missing
+        // turns simply don't appear, no padding is added.
+        assertEquals(4, messages.size)
+        assertEquals(listOf("u1", "a1"), messages.subList(1, 3).map { it.content })
+        assertEquals(LlmMessage.ROLE_USER, messages.last().role)
+        assertEquals("?", messages.last().content)
+    }
+
+    @Test
+    fun question_emptyHistoryStillProducesSystemAndQuestion() {
+        val messages: List<LlmMessage> = PromptBuilder.question(
+            transcript = "Alice: hello\n",
+            maxChars = 1_000,
+            history = emptyList(),
+            question = "first question"
+        )
+
+        // system + question = 2 messages, no history at all.
+        assertEquals(2, messages.size)
+        assertEquals(LlmMessage.ROLE_SYSTEM, messages[0].role)
+        assertEquals(LlmMessage.ROLE_USER, messages[1].role)
+        assertEquals("first question", messages[1].content)
+    }
+
+    @Test
+    fun question_trimsLeadingAndTrailingWhitespace() {
+        val messages: List<LlmMessage> = PromptBuilder.question(
+            transcript = "Alice: hello\n",
+            maxChars = 1_000,
+            history = emptyList(),
+            question = "\n\n  was ist los? \n\n"
+        )
+        assertEquals("was ist los?", messages.last().content)
+    }
+}
