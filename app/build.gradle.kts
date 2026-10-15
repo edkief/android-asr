@@ -55,6 +55,16 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        // Serialise unit tests: many ViewModel suites call
+        // `Dispatchers.setMain` / `resetMain` on a static
+        // dispatcher and the `kotlinx-coroutines-test`
+        // `TestMainDispatcher` throws when two test classes race
+        // to swap it. With forks = 1 we still run inside a worker
+        // pool but only one fork at a time, which is well within
+        // budget for our test-suite size.
+        unitTests.all { test ->
+            test.maxParallelForks = 1
+        }
     }
 
     lint {
