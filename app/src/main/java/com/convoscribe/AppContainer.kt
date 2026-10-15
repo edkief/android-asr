@@ -10,6 +10,9 @@ import com.convoscribe.diarization.DiarizeSessionUseCase
 import com.convoscribe.diarization.DiarizerFactory
 import com.convoscribe.engine.sherpa.SherpaDiarizerFactory
 import com.convoscribe.engine.sherpa.SherpaTranscriberFactory
+import com.convoscribe.llm.ChatClient
+import com.convoscribe.llm.LlmConfig
+import com.convoscribe.llm.OpenAiChatClient
 import com.convoscribe.models.ModelDownloader
 import com.convoscribe.models.ModelStore
 import com.convoscribe.recording.RecordingController
@@ -158,4 +161,35 @@ class AppContainer(val context: Context) {
         diarizerFactory = diarizerFactory,
         settings = settingsRepository
     )
+
+    /**
+     * Dedicated OkHttp client for the LLM streaming endpoint. The
+     * shared [httpClient] is sized for model downloads (120 s read
+     * timeout); an LLM stream can run for several minutes, so the
+     * LLM client gets its own client with a five-minute read
+     * timeout. Kept separate from [httpClient] so a slow model
+     * download never starves the chat thread of sockets.
+     */
+    val llmHttpClient: OkHttpClient = httpClient.newBuilder()
+        .readTimeout(300, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * Talks to the user's OpenAI-compatible endpoint. Settings are
+     * read lazily through a lambda so a fresh base URL / API key /
+     * model from the Settings screen is picked up on the next
+     * streaming call without rebuilding the client. The lambda
+     * reads both [SettingsRepository.settings] (a `StateFlow`) and
+     * [SettingsRepository.apiKey] (an encrypted store), so the
+     * session-summary / Q&A screens (TASK-24+) can use the same
+     * instance for the lifetime of the app.
+     */
+    val chatClient: ChatClient = OpenAiChatClient(llmHttpClient) {
+        val s = settingsRepository.settings.value
+        LlmConfig(
+            baseUrl = s.llmBaseUrl,
+            apiKey = settingsRepository.apiKey(),
+            model = s.llmModel
+        )
+    }
 }

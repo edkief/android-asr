@@ -2,6 +2,24 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-23 — OpenAI-compatible chat client with SSE streaming
+
+Adds the LLM client the summary and Q&A screens will use.
+
+**New package** `llm/`:
+* `LlmMessage.kt` — `data class LlmMessage(val role: String, val content: String)` plus role constants.
+* `LlmException.kt` — `LlmException(message, httpCode?, cause?)` carries the HTTP code (null for transport / config errors).
+* `SseParser.kt` — stateless line parser with a sealed `Line { Delta, Done, Ignore }`. Handles `data:` / `[DONE]` / SSE comments / event lines, JSON `error` frames (throws `LlmException`), and missing/empty `delta.content`. Uses `Json { ignoreUnknownKeys = true }`.
+* `ChatClient.kt` — `interface ChatClient { stream(...): Flow<String>; suspend listModels(): List<String> }`, `data class LlmConfig(...)`, and `class OpenAiChatClient(http, config: () -> LlmConfig)`. `stream` is a `callbackFlow` that POSTs `/chat/completions` with `stream: true`, reads the body line by line with `readUtf8Line()`, emits `Delta` strings, and aborts the OkHttp `Call` on flow cancellation via `currentCoroutineContext().job.invokeOnCompletion`. Non-2xx and IO failures become `LlmException`. `listModels` parses `data[].id`.
+
+**AppContainer**: new `llmHttpClient = httpClient.newBuilder().readTimeout(300, SECONDS).build()` and `chatClient: ChatClient = OpenAiChatClient(llmHttpClient) { ... }` reading the base URL, API key and model lazily from `SettingsRepository` so settings changes are picked up on the next call.
+
+**Tests** (`llm/SseParserTest.kt`, `llm/OpenAiChatClientTest.kt`):
+* SseParser: comment, blank, `event:` line, `[DONE]`, delta with content, null/empty content, role-only first chunk, malformed JSON, missing `choices`, `error` object with and without `message`, and extra unknown fields.
+* OpenAiChatClient (MockWebServer): delta stream `/v1/chat/completions`, `Authorization` present with key, absent when blank, 401 → `LlmException(401)` with `bad key` in the message, blank base URL → `"LLM endpoint is not configured"` with no HTTP request, blank model → same, `listModels` parses `data[].id`, non-OK `listModels` surfaces the HTTP code, error frame inside a 200 OK stream → `LlmException("rate limited")`.
+
+`./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` passes (212 tests, 0 failures).
+
 ## 2026-10-15 — TASK-22 — Rename speakers and session title; re-run speaker detection
 
 Let users replace "Speaker N" with real names, rename the session, and re-run diarization.
