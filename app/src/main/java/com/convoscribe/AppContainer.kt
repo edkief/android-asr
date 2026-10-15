@@ -6,6 +6,8 @@ import com.convoscribe.asr.TranscriberFactory
 import com.convoscribe.audio.MicAudioSource
 import com.convoscribe.data.AppDatabase
 import com.convoscribe.data.SessionRepository
+import com.convoscribe.diarization.DiarizerFactory
+import com.convoscribe.engine.sherpa.SherpaDiarizerFactory
 import com.convoscribe.engine.sherpa.SherpaTranscriberFactory
 import com.convoscribe.models.ModelDownloader
 import com.convoscribe.models.ModelStore
@@ -124,5 +126,20 @@ class AppContainer(val context: Context) {
         store = sessionRepository,
         language = { settingsRepository.settings.value.asrLanguage },
         asrDispatcher = Dispatchers.Default.limitedParallelism(1)
+    )
+
+    /**
+     * Factory the post-recording pipeline (TASK-19) uses to ask
+     * for a fresh diarizer per session. Wired to the
+     * sherpa-onnx engine because that's the only diarizer we ship
+     * today; the `fun interface` keeps the pipeline engine-
+     * agnostic. The factory refuses to build a [com.convoscribe.diarization.Diarizer]
+     * when either model file is missing on disk (it throws
+     * `IllegalStateException("Model not installed: <id>")`) so
+     * the post-record flow can surface a download hint.
+     */
+    val diarizerFactory: DiarizerFactory = SherpaDiarizerFactory(
+        store = modelStore,
+        settings = settingsRepository
     )
 }

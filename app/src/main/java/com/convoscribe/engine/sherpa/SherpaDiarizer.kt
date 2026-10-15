@@ -1,0 +1,108 @@
+package com.convoscribe.engine.sherpa
+
+import com.convoscribe.diarization.Diarizer
+import com.convoscribe.diarization.SpeakerTurn
+import com.k2fsa.sherpa.onnx.FastClusteringConfig
+import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
+import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
+import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
+import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig
+import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
+import java.io.File
+
+/**
+ * [Diarizer] backed by sherpa-onnx's `OfflineSpeakerDiarization`.
+ * The native engine holds the segmentation (`model.int8.onnx`,
+ * pyannote-3.0) and embedding (`wespeaker_en_voxceleb_resnet34_LM.onnx`)
+ * models for the lifetime of this instance, so the class is
+ * `Closeable` and the factory gives every recording session its
+ * own.
+ *
+ * The config's clustering is left at `numClusters = -1` /
+ * `threshold = 0.5` for construction: the per-invocation overrides
+ * from [diarize] are applied via [OfflineSpeakerDiarization.setConfig]
+ * before the audio is fed in. Re-clustering every call would be
+ * pointless (the embedding extractor output is deterministic for
+ * the same audio), but the sherpa-onnx API exposes the knob only
+ * that way.
+ *
+ * @param segmentationModel absolute path to the segmentation
+ *   `.onnx` (pyannote-3.0 int8, the file `ModelCatalog.SEGMENTATION`
+ *   tracks).
+ * @param embeddingModel absolute path to the embedding `.onnx`
+ *   (`wespeaker_en_voxceleb_resnet34_LM`, the file
+ *   `ModelCatalog.EMBEDDING` tracks).
+ * @param numThreads forwarded to both sub-configs; today the
+ *   CPU is the only supported backend for diarization.
+ */
+class SherpaDiarizer(
+    segmentationModel: File,
+    embeddingModel: File,
+    numThreads: Int
+) : Diarizer {
+
+    private val sd: OfflineSpeakerDiarization
+
+    init {
+        val config = OfflineSpeakerDiarizationConfig(
+            segmentation = OfflineSpeakerSegmentationModelConfig(
+                pyannote = OfflineSpeakerSegmentationPyannoteModelConfig(
+                    model = segmentationModel.absolutePath
+                ),
+                numThreads = numThreads
+            ),
+            embedding = SpeakerEmbeddingExtractorConfig(
+                model = embeddingModel.absolutePath,
+                numThreads = numThreads
+            ),
+            clustering = FastClusteringConfig(
+                numClusters = -1,
+                threshold = 0.5f
+            ),
+            minDurationOn = 0.3f,
+            minDurationOff = 0.5f
+        )
+        sd = OfflineSpeakerDiarization(assetManager = null, config = config)
+    }
+
+    override fun diarize(
+        samples: FloatArray,
+        numSpeakers: Int,
+        threshold: Float,
+        onProgress: (Float) -> Unit
+    ): List<SpeakerTurn> {
+        // sherpa-onnx re-clusters on every process() call using
+        // whatever's currently in the config — push the
+        // caller-supplied (numSpeakers, threshold) pair before
+        // kicking off the work.
+        sd.setConfig(
+            sd.config.copy(
+                clustering = FastClusteringConfig(
+                    numClusters = numSpeakers,
+                    threshold = threshold
+                )
+            )
+        )
+        // The callback must return 0 to continue (any other value
+        // asks sherpa-onnx to abort the run); we always return 0
+        // and only forward a normalised 0f..1f progress fraction.
+        val raw = sd.processWithCallback(
+            samples,
+            callback = { done, total, _ ->
+                onProgress(if (total <= 0) 0f else done.toFloat() / total)
+                0
+            }
+        )
+        return raw.map { seg ->
+            SpeakerTurn(
+                startMs = (seg.start * 1000f).toLong(),
+                endMs = (seg.end * 1000f).toLong(),
+                speaker = seg.speaker
+            )
+        }
+    }
+
+    override fun close() {
+        sd.release()
+    }
+}
