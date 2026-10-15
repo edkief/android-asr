@@ -1,5 +1,6 @@
 package com.convoscribe.ui.settings
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -217,6 +218,7 @@ fun SettingsScreen(navController: NavHostController) {
                     vm.update(state.form.copy(clusterThreshold = value))
                 }
             )
+            AboutSection()
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -579,4 +581,86 @@ private fun SectionHeader(text: String) {
         style = MaterialTheme.typography.titleMedium,
         modifier = Modifier.padding(top = 8.dp)
     )
+}
+
+/**
+ * "About" section: lists every model bundled by the on-device ASR and
+ * diarization pipeline alongside its licence and a source link. Renders
+ * after the three editable sections as a read-only credit roll so a
+ * user who skipped the README can still see which upstream / licence
+ * applies to a given model.
+ *
+ * Each [AboutModelRow] shows the model name, the licence in bodySmall,
+ * and a tappable `Uri` link to the upstream source (`Intent.ACTION_VIEW`,
+ * `chooser` skipped so a single browser is launched directly). The
+ * Kroko rows in particular highlight the `CC-BY-SA 4.0` attribution
+ * requirement (the LICENSE places copyleft on derivative works, so the
+ * README mirrors this list with the same wording).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AboutSection() {
+    SectionHeader(text = stringResource(R.string.settings_section_about))
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        AboutModelRow(
+            name = stringResource(R.string.settings_about_nemotron_name),
+            licence = stringResource(R.string.settings_about_nemotron_licence),
+            url = "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
+        )
+        AboutModelRow(
+            name = stringResource(R.string.settings_about_kroko_name),
+            licence = stringResource(R.string.settings_about_kroko_licence),
+            url = "https://huggingface.co/Banafo/Kroko-ASR"
+        )
+        AboutModelRow(
+            name = stringResource(R.string.settings_about_pyannote_name),
+            licence = stringResource(R.string.settings_about_pyannote_licence),
+            url = "https://github.com/pyannote/pyannote-segmentation"
+        )
+        AboutModelRow(
+            name = stringResource(R.string.settings_about_wespeaker_name),
+            licence = stringResource(R.string.settings_about_wespeaker_licence),
+            url = "https://github.com/wenet-e2e/wespeaker"
+        )
+        AboutModelRow(
+            name = stringResource(R.string.settings_about_sherpa_name),
+            licence = stringResource(R.string.settings_about_sherpa_licence),
+            url = "https://github.com/k2-fsa/sherpa-onnx"
+        )
+        AboutModelRow(
+            name = stringResource(R.string.settings_about_qnn_name),
+            licence = stringResource(R.string.settings_about_qnn_licence),
+            url = "https://developer.qualcomm.com/software/qualcomm-neural-processing-sdk"
+        )
+    }
+}
+
+/**
+ * One row in the [AboutSection]. Renders the model name, the licence
+ * in bodySmall, and a `TextButton` that opens the upstream URL via
+ * [Intent.ACTION_VIEW]. Using a plain `Text` clickable instead of a
+ * link gives consistent focus / ripple behaviour inside the
+ * scrollable settings column.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AboutModelRow(name: String, licence: String, url: String) {
+    val context = LocalContext.current
+    Column {
+        Text(
+            text = name,
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Text(
+            text = licence,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        TextButton(onClick = {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            runCatching { context.startActivity(intent) }
+        }) {
+            Text(text = url)
+        }
+    }
 }

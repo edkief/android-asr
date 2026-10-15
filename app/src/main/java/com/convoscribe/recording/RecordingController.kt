@@ -1,5 +1,7 @@
 package com.convoscribe.recording
 
+import android.util.Log
+import com.convoscribe.TAG
 import com.convoscribe.asr.StreamingTranscriber
 import com.convoscribe.asr.TranscriberFactory
 import com.convoscribe.asr.TranscriptEvent
@@ -150,6 +152,7 @@ class RecordingController(
                         error = null
                     )
                 }
+                Log.i(TAG, "recording started session=$id lang=$lang")
                 // Drain the audio source until the collector is
                 // cancelled (stop() / scope cancellation). Each
                 // emission is persisted twice: once to the WAV on
@@ -245,6 +248,7 @@ class RecordingController(
             lastCompletedSessionId = id
         )
         sessionJob = null
+        Log.i(TAG, "recording stopped session=$id durationMs=$durationMs")
         return id
     }
 

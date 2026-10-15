@@ -55,6 +55,15 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        // Return default values (0/null/false) for every
+        // `android.util.*` method that is not mocked by Robolectric.
+        // Without this, every diagnostic `Log.i(TAG, ...)` /
+        // `Log.w(TAG, ...)` call from production code throws
+        // `RuntimeException("Method i in android.util.Log not
+        // mocked")` in pure-JUnit tests where Robolectric is not
+        // active (e.g. `RecordingControllerTest`,
+        // `ModelDownloaderTest`).
+        unitTests.isReturnDefaultValues = true
         // Serialise unit tests: many ViewModel suites call
         // `Dispatchers.setMain` / `resetMain` on a static
         // dispatcher and the `kotlinx-coroutines-test`

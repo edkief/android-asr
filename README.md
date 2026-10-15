@@ -6,6 +6,39 @@ transcribes them on-device with sherpa-onnx (the NPU path uses the Nemotron Spee
 speakers with on-device diarization, and forwards the transcript to a user-configured
 OpenAI-compatible endpoint for summaries and questions about the session.
 
+## Features
+
+- **Live, on-device speech-to-text** while recording. The engine is
+  user-selected in Settings; there is no automatic fallback.
+  - **NPU (default)** — Nemotron Speech Streaming EN 0.6B on the
+    Hexagon DSP via sherpa-onnx's QNN backend, English only.
+  - **CPU** — Kroko streaming zipformer, English and French.
+- **Engine check** screen that runs an end-to-end pass on a bundled
+  sample wave and reports the device, free storage, first-run QNN
+  preparation time, real-time factor (RTF) and recognised text for
+  whichever engine is requested. Reports can be copied / shared so
+  you can attach them to a bug report.
+- **On-device speaker diarization** after a recording stops. Each
+  transcript line is labelled `Speaker 1`, `Speaker 2`, … and the
+  user can rename a speaker (e.g. `Speaker 1` → `Alice`).
+- **Foreground microphone service** keeps recording alive while the
+  screen is off or the app is in the background, with a
+  Stop action on the persistent notification.
+- **Crash-safe sessions** — sessions persist across restarts in a
+  Room database; a recording interrupted by an `am force-stop` is
+  recovered on next launch and lands in the session list with
+  whatever transcript was already transcribed.
+- **Summaries and Q&A** through any
+  OpenAI-compatible `/v1/chat/completions` endpoint (vLLM,
+  llama.cpp server, Ollama with `http://<host>:11434/v1`, OpenAI,
+  …); answers stream token-by-token and are saved with the session.
+- **Switchable language** — switch to Français in Settings to
+  download the French model (~71 MB) and transcribe French speech
+  with the CPU engine. Each language has an explicit model status
+  caption ("installed" / "missing").
+- **Share transcript** to any system share-sheet target (notes app,
+  email, …) and rename sessions / speakers from the overflow menu.
+
 ## Build
 
 ```bash
@@ -19,6 +52,151 @@ source scripts/env.sh
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+
+`usesCleartextTraffic="true"` is already enabled on `<application>`
+so plain-HTTP local endpoints (e.g. `http://192.168.1.10:8000/v1`,
+Ollama at `http://<host>:11434/v1`) work without a custom
+`network_security_config`. Do not place a stricter network
+security config on the app — that would block the local endpoint.
+
+## Manual testing
+
+The agent loop cannot run on-device tests (the sherpa-onnx native
+library only loads on real hardware). The owner-side checklist
+that validates the PRD acceptance criteria is at
+[`docs/MANUAL_TEST.md`](docs/MANUAL_TEST.md) — 16 numbered checks
+covering install, model download, both engines, recording,
+diarization, renaming, sharing, the LLM endpoint, summaries, Q&A,
+French, deletion, crash recovery, performance and engine
+switching. A troubleshooting section shows how to read
+`adb logcat`, where models live on disk, and how to clear app
+data.
+
+## Models
+
+| bundleId | engine | bytes (sum of declared files) | what |
+|---|---|---|---|
+| `asr-en-nemotron-0.6b-560ms-qnn` | NPU | 609 181 848 (≈581 MB after the `.tar.bz2` is unpacked) | English speech recognition. Source archive `…-nemotron-speech-streaming-en-0.6b-560s-android-aarch64.tar.bz2` (421 938 876 compressed bytes). Provider `qnn`, `modelType = "nemo_transducer"`. `encoder.bin`/`decoder.bin`/`joiner.bin` QNN context binaries are produced on first run and cached. |
+| `asr-en-kroko-2025-08-06` | CPU | 71 237 822 (≈68 MB) | English speech recognition. Streaming zipformer (`encoder.onnx`, `decoder.onnx`, `joiner.onnx`, `tokens.txt`, `test_wavs/0.wav`). `modelType = "zipformer2"`. |
+| `asr-fr-kroko-2025-08-06` | CPU | 71 056 155 (≈68 MB) | French speech recognition. Same file layout as English without the test wave. `modelType = "zipformer2"`. |
+| `seg-pyannote-3-0-int8` | CPU (always) | 1 540 506 (≈1.5 MB) | Speaker segmentation. `model.int8.onnx`. |
+| `emb-wespeaker-resnet34-lm` | CPU (always) | 26 530 550 (≈25 MB) | Speaker embeddings. `wespeaker_en_voxceleb_resnet34_LM.onnx`. |
+
+Sources:
+
+- NPU archive:
+  `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models-qnn-2/sherpa-onnx-qnn-nemotron-speech-streaming-en-0.6b-560s-android-aarch64.tar.bz2`
+- English ASR: `https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06/resolve/main/<file>`
+- French ASR: `https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06/resolve/main/<file>`
+- Segmentation: `https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.int8.onnx`
+- Embeddings: `https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx`
+  (the `recongition` misspelling is in the upstream tag and must be preserved).
+
+Models are downloaded on first run into
+`context.filesDir/models/<bundleId>/` — see the troubleshooting
+section of `docs/MANUAL_TEST.md` for the exact path and how to
+inspect / clear it with `adb shell`.
+
+## Architecture
+
+Single-module Android app `:app`, Kotlin + Jetpack Compose,
+Material 3. Source under `app/src/main/java/com/convoscribe/`,
+one package per concern:
+
+- `audio/` — PCM16 16 kHz primitives: `WavWriter`, `WavReader`,
+  `MicAudioSource` (a thin `AudioRecord` wrapper).
+- `models/` — `ModelCatalog` (the bundle table above),
+  `ModelDownloader` (HTTPS + tar.bz2 stream), `ModelStore` (the
+  on-disk layout and per-file presence check).
+- `asr/` — engine-agnostic streaming interface:
+  `StreamingTranscriber`, `TranscriberFactory`,
+  `TranscriptEvent` (Partial / Final), `EndpointSegmenter`,
+  `TextNormalizer`.
+- `diarization/` — post-record diarization pipeline:
+  `DiarizeSessionUseCase` (single rule, called from the
+  foreground service after `controller.stop()` and from the
+  crash-recovery boot pass), `Diarizer`, `SpeakerTurn`,
+  `SpeakerAssigner`.
+- `engine/sherpa/` — the only package that ever imports
+  `com.k2fsa.sherpa.onnx`: `SherpaRecognizerBackend`,
+  `SherpaTranscriberFactory`, `SherpaDiarizer`,
+  `SherpaDiarizerFactory`, `SherpaInfo`, `SherpaAsrConfigs`,
+  `QnnRuntime` (`prependAdspLibraryPath`).
+- `data/` — Room database (`AppDatabase`), entities and DAOs for
+  sessions, segments, speakers, chat messages; `SessionRepository`
+  is the single façade the rest of the app reads / writes through.
+- `settings/` — `SettingsRepository` (SharedPreferences),
+  `AppSettings`, `SecretStore` (EncryptedSharedPreferences) for
+  the LLM API key.
+- `llm/` — `ChatClient` (OkHttp + kotlinx.serialization, SSE
+  streaming), `LlmException`, `LlmMessage`, `PromptBuilder`,
+  `SseParser`, `TranscriptTruncator`.
+- `recording/` — `RecordingController` (the audio + ASR loop),
+  `RecordingState`, `RecordingStore`, `SessionRecovery` (the
+  crash-recovery boot pass).
+- `service/` — `RecordingService` (foreground microphone service),
+  notification text helper.
+- `enginecheck/` — `DeviceInfo` (manufacturer / SoC / libcdsprpc /
+  storage), `EngineCheckRunner`, `Report`.
+- `ui/<screen>/` — one package per screen, Composable + ViewModel
+  pair (`home`, `record`, `session`, `settings`, `setup`,
+  `enginecheck`); `ui/AppNavHost.kt` is the navigation graph;
+  `ui/theme/` is the Material 3 theme.
+
+Dependency injection is manual: `com.convoscribe.AppContainer` is
+built in `com.convoscribe.ConvoApp : Application` and is the
+single source of every singleton. ViewModels are constructed with
+a `viewModelFactory { initializer { … } }` that reads from the
+container.
+
+## LLM endpoint
+
+The LLM endpoint is configured in **Settings → Language model**:
+
+- **Base URL** — the OpenAI-compatible base URL. Must end with
+  `/v1`. Examples:
+  - OpenAI: `https://api.openai.com/v1`
+  - vLLM / llama.cpp server: `http://<host>:8000/v1`
+  - Ollama: `http://<host>:11434/v1` (Ollama exposes an
+    OpenAI-compatible shim on `/v1`)
+- **API key** — optional, stored in `EncryptedSharedPreferences`.
+- **Model name** — free text, e.g. `meta-llama-3.1-8b-instruct`.
+  Tap **Test connection** to populate the chip list with model ids
+  returned by the endpoint.
+- **Max transcript characters** — the context-window cap for
+  summaries and Q&A; the default 24 000 chars fits several hours of
+  conversational text.
+
+The endpoint is contacted only by `llm/ChatClient.kt`. The
+streaming path uses server-sent events (`data: {…}\n\n` chunks)
+and surfaces partial tokens to the UI as soon as the SSE parser
+sees the `delta.content` field.
+
+## Model licences
+
+Every model bundled by the on-device ASR / diarization pipeline
+is used under its upstream licence; Settings → About shows the
+same list with each model name + licence + source URL.
+
+- **Nemotron Speech Streaming EN 0.6B** — NVIDIA Open Model
+  License, https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/
+- **Kroko streaming EN / FR** — CC-BY-SA 4.0
+  (Banafo Kroko ASR community models,
+  https://huggingface.co/Banafo/Kroko-ASR). Attribution is shown
+  in this README and in Settings → About.
+- **pyannote segmentation 3.0** — MIT.
+- **WeSpeaker ResNet34-LM** — Apache-2.0.
+- **sherpa-onnx** — Apache-2.0, https://github.com/k2-fsa/sherpa-onnx.
+- **Qualcomm AI Engine Direct (QNN) runtime libraries**
+  (`libQnnHtp.so`, `libQnnHtpPrepare.so`, `libQnnSystem.so`,
+  `libQnnHtpV{68,69,73,75,79,81}{Skel,Stub}.so`) — redistributed
+  unmodified under the Qualcomm licence by sherpa-onnx; see
+  https://developer.qualcomm.com/software/qualcomm-neural-processing-sdk.
+
+The bundled QualComm QNN runtime libraries ship unmodified so the
+NPU backend (Hexagon DSP via `libcdsprpc.so`) can be reached at
+runtime. All of `app/src/main/jniLibs/` and `app/libs/*.jar` are
+git-ignored build artifacts.
 
 ## Native engine (sherpa-onnx + Qualcomm QNN)
 
@@ -62,9 +240,15 @@ idempotent: a second `bash scripts/build-sherpa-onnx.sh` prints
 `sherpa-onnx native libs OK` and exits 0. Pass `--force` to wipe
 `$WORK` and rebuild from scratch.
 
-The `libQnnHtp*.so`, `libQnnSystem.so` and `libQnnHtpV*` shared
-libraries are **Qualcomm AI Engine Direct runtime files** redistributed
-by sherpa-onnx; we ship them unmodified so the NPU backend (Hexagon
-DSP via `libcdsprpc.so`) can be reached at runtime. All of
-`app/src/main/jniLibs/` and `app/libs/*.jar` are git-ignored build
-artifacts.
+## Test
+
+```bash
+source scripts/env.sh
+./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug
+```
+
+The `testDebugUnitTest` phase runs JUnit 4 + Robolectric +
+Turbine in the JVM; sherpa-onnx classes are never instantiated in
+unit tests (their native library cannot load on the JVM), only the
+`*Config` data classes are touched. The full suite runs in ~17 s
+with `unitTests.maxParallelForks = 1`.

@@ -135,4 +135,17 @@
     <string name="session_ask_clear_message">This removes every question and answer for this session.</string>
     <string name="session_ask_clear_confirm">Clear</string>
     <string name="session_ask_clear_cancel">Cancel</string>
+    <string name="settings_section_about">About</string>
+    <string name="settings_about_nemotron_name">Nemotron Speech Streaming EN 0.6B</string>
+    <string name="settings_about_nemotron_licence">NVIDIA Open Model License</string>
+    <string name="settings_about_kroko_name">Kroko streaming EN/FR</string>
+    <string name="settings_about_kroko_licence">CC-BY-SA 4.0</string>
+    <string name="settings_about_pyannote_name">pyannote segmentation 3.0</string>
+    <string name="settings_about_pyannote_licence">MIT</string>
+    <string name="settings_about_wespeaker_name">WeSpeaker ResNet34-LM</string>
+    <string name="settings_about_wespeaker_licence">Apache-2.0</string>
+    <string name="settings_about_sherpa_name">sherpa-onnx</string>
+    <string name="settings_about_sherpa_licence">Apache-2.0</string>
+    <string name="settings_about_qnn_name">Qualcomm AI Engine Direct (QNN)</string>
+    <string name="settings_about_qnn_licence">Qualcomm licence (redistributed by sherpa-onnx)</string>
 </resources>

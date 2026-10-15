@@ -38,7 +38,8 @@
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.ConvoScribe"
-        android:largeHeap="true">
+        android:largeHeap="true"
+        android:usesCleartextTraffic="true">
         <!--
             libcdsprpc.so is the userspace half of the Hexagon DSP RPC
             driver. The QNN HTP backend loads the *.so Skel/Stub pair via

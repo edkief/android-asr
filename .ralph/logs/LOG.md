@@ -1,3 +1,61 @@
+## 2026-10-15 — TASK-29: Manual on-device test guide and README completion
+
+Wrote `docs/MANUAL_TEST.md` with 18 numbered headings (16 distinct
+checks per the spec, with 2 split into 2b/2c for the NPU / CPU
+engine-check paths). Each item has a Steps / Expected block and a
+combined troubleshooting section covers `adb logcat -s sherpa-onnx
+ConvoScribe AndroidRuntime`, where models live on disk,
+`/data/data/com.convoscribe/files/models`, `uses-native-library
+libcdsprpc.so`, the QNN error `14001` recovery
+(delete `encoder.bin`/`decoder.bin`/`joiner.bin` to force
+re-preparation), and `adb shell pm clear com.convoscribe` for a
+fresh start.
+
+Added `Log.kt` with a single shared `const val TAG = "ConvoScribe"`
+and pointed the existing `Log.w` calls in `DiarizeSessionUseCase`
+at it (removed the private `"DiarizeSessionUseCase"` companion).
+New `Log.i(TAG, …)` lines for the events the spec calls out —
+recording started (`session=` + `lang=`), recording stopped
+(`session=` + `durationMs=`), diarization completed
+(`session=` + `durationMs=` + `speakers=`), and model download
+completed (`bytesDone=` + `bundles=`). `grep 'const val TAG'` now
+finds exactly one definition; `grep 'Log\.[iw](TAG'` matches 8
+lines (6 real calls + 2 kdoc snippets in `Log.kt` itself).
+
+Expanded `README.md` with a Features list, an Architecture section
+that walks every package under `app/src/main/java/com/convoscribe/`
+with one line of prose each (`audio`, `models`, `asr`,
+`diarization`, `engine/sherpa`, `data`, `settings`, `llm`,
+`recording`, `service`, `enginecheck`, `ui/<screen>/`, `ui/theme/`),
+a Models table (bundleId, engine, size, files, source per row),
+an LLM endpoint subsection covering `Base URL must end with /v1`
+with examples for vLLM (`http://<host>:8000/v1`), llama.cpp server
+and Ollama (`http://<host>:11434/v1`), a link to
+`docs/MANUAL_TEST.md`, a "Model licences" section (Nemotron —
+NVIDIA Open Model License, Kroko — CC-BY-SA 4.0, pyannote MIT,
+WeSpeaker Apache-2.0, sherpa-onnx Apache-2.0, QNN — Qualcomm
+licence), and a security note that
+`android:usesCleartextTraffic="true"` is enabled on `<application>`
+for plain-HTTP local LLM servers.
+
+Added `android:usesCleartextTraffic="true"` to `<application>` in
+`AndroidManifest.xml` and an About section at the bottom of
+`SettingsScreen` listing each model with its licence and source URL
+(NVIDIA Open Model License, CC-BY-SA 4.0, MIT, Apache-2.0,
+Apache-2.0, Qualcomm). New strings `settings_section_about` plus
+six `settings_about_*_name` / `_licence` pairs.
+
+`app/build.gradle.kts` `testOptions { unitTests.isReturnDefaultValues
+= true }` so pure-JUnit tests (RecordingControllerTest,
+ModelDownloaderTest) no longer throw `RuntimeException("Method i in
+android.util.Log not mocked")` when the new diagnostic lines run;
+Robolectric tests were already fine.
+
+Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest
+lintDebug assembleDebug` exits 0 (257 tests passing, ktlint clean,
+lintDebug clean, assembleDebug succeeds).
+
 ## 2026-10-15 — TASK-28: French transcription: language setting, model download and per-session language
 
 Added French as a second ASR language: `TextNormalizer` now pins its

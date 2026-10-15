@@ -1,6 +1,7 @@
 package com.convoscribe.diarization
 
 import android.util.Log
+import com.convoscribe.TAG
 import com.convoscribe.audio.WavReader
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.data.SessionStatus
@@ -70,8 +71,17 @@ class DiarizeSessionUseCase(
      * engine entirely and lands on [SessionStatus.DIARIZED]; the
      * diarizer factory is not invoked, the WAV is not read, and
      * no speaker rows are written.
+     *
+     * On success, an info-level line is written with the shared
+     * [TAG] (`adb logcat -s ConvoScribe`) so the owner can confirm
+     * in adb logcat that the post-record diarization step actually
+     * ran. The line includes the session id, total wall-clock
+     * duration, and the number of speakers the engine detected —
+     * the three values the manual test checklist calls out as
+     * worth recording.
      */
     suspend fun run(sessionId: Long, onProgress: (Float) -> Unit = {}) {
+        val startedNanos = System.nanoTime()
         try {
             repository.setStatus(sessionId, SessionStatus.DIARIZING)
             val session = repository.getSession(sessionId)
@@ -115,6 +125,12 @@ class DiarizeSessionUseCase(
                 assignments = assignment.speakerBySegment,
                 speakerCount = assignment.speakerCount
             )
+            val durationMs = (System.nanoTime() - startedNanos) / 1_000_000L
+            Log.i(
+                TAG,
+                "diarization completed session=$sessionId durationMs=$durationMs" +
+                    " speakers=${assignment.speakerCount}"
+            )
         } catch (ce: CancellationException) {
             // Cooperative cancellation: re-throw so structured
             // concurrency still sees the cancel and the service
@@ -126,9 +142,5 @@ class DiarizeSessionUseCase(
             Log.w(TAG, "Diarization failed for session $sessionId", t)
             repository.setStatus(sessionId, SessionStatus.DIARIZATION_FAILED)
         }
-    }
-
-    private companion object {
-        const val TAG = "DiarizeSessionUseCase"
     }
 }

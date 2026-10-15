@@ -1,5 +1,7 @@
 package com.convoscribe.models
 
+import android.util.Log
+import com.convoscribe.TAG
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -158,6 +160,7 @@ class ModelDownloader(
                 )
             }
         }
+        Log.i(TAG, "model download completed bytesDone=$bytesTotal bundles=${bundles.size}")
         emit(DownloadEvent.Completed)
     }.flowOn(Dispatchers.IO)
 
