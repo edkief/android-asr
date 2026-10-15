@@ -34,7 +34,6 @@
     <string name="settings_title">Settings</string>
     <string name="settings_back">Back</string>
     <string name="settings_placeholder_body">Settings will land in TASK-21.</string>
-    <string name="session_placeholder_title">Session %1$d</string>
     <string name="enginecheck_title">Engine check</string>
     <string name="enginecheck_device_title">Device</string>
     <string name="enginecheck_device_loading">Reading…</string>
@@ -62,4 +61,14 @@
     <string name="enginecheck_result_error">Error: %1$s</string>
     <string name="enginecheck_copy_report">Copy report</string>
     <string name="enginecheck_share_report">Share report</string>
+    <string name="session_back">Back</string>
+    <string name="session_share">Share transcript</string>
+    <string name="session_tab_transcript">Transcript</string>
+    <string name="session_tab_summary">Summary</string>
+    <string name="session_tab_ask">Ask</string>
+    <string name="session_status_diarizing">Identifying speakers…</string>
+    <string name="session_status_diarization_failed">Speaker detection failed</string>
+    <string name="session_transcript_empty">No speech was recognised.</string>
+    <string name="session_coming_soon">Coming soon</string>
+    <string name="session_not_found">Session not found.</string>
 </resources>

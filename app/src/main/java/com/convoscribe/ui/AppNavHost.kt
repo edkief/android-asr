@@ -27,6 +27,7 @@ import com.convoscribe.R
 import com.convoscribe.ui.enginecheck.EngineCheckScreen
 import com.convoscribe.ui.home.HomeScreen
 import com.convoscribe.ui.record.RecordScreen
+import com.convoscribe.ui.session.SessionScreen
 import com.convoscribe.ui.setup.ModelSetupScreen
 
 private const val ROUTE_HOME = "home"
@@ -54,8 +55,10 @@ private const val ROUTE_SETTINGS = "settings"
  *    overflow menu;
  *  - `settings` — placeholder until TASK-21 wires the real
  *    settings screen;
- *  - `session/{id}` — placeholder until TASK-14 builds the real
- *    session-detail screen.
+ *  - `session/{id}` — session-detail screen (transcript tab,
+ *    summary tab and ask tab). Built by TASK-21; the route id is
+ *    a `Long` so the home list's `session/${row.id}` push lands
+ *    on the right row.
  */
 @Composable
 fun AppNavHost(startDestination: String = ROUTE_HOME) {
@@ -102,31 +105,17 @@ fun AppNavHost(startDestination: String = ROUTE_HOME) {
         composable(ROUTE_SETTINGS) {
             SettingsPlaceholder(navController = navController)
         }
-        composable(ROUTE_SESSION_DETAIL) { backStackEntry ->
-            val id = backStackEntry.arguments?.getString("id")?.toLongOrNull() ?: 0L
-            SessionDetailPlaceholder(id = id)
+        composable(
+            route = ROUTE_SESSION_DETAIL,
+            arguments = listOf(
+                navArgument("id") {
+                    type = NavType.LongType
+                }
+            )
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getLong("id") ?: 0L
+            SessionScreen(sessionId = id, navController = navController)
         }
-    }
-}
-
-/**
- * Placeholder composed for `session/{id}` until TASK-14 wires the
- * real session-detail screen. Renders the id so it is obvious which
- * completed session a navigation push landed on; kept inside
- * `AppNavHost.kt` so the route and its placeholder travel together.
- */
-@Composable
-private fun SessionDetailPlaceholder(id: Long) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = stringResource(R.string.session_placeholder_title, id),
-            style = MaterialTheme.typography.headlineMedium
-        )
     }
 }
 

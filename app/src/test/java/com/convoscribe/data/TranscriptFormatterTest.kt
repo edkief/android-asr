@@ -1,0 +1,216 @@
+package com.convoscribe.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/**
+ * Unit tests for [TranscriptFormatter]. The formatter is a pure
+ * object so it does not need Robolectric; it lives in
+ * `src/test/` and runs against the regular JVM. Only the
+ * acceptance tests called out by TASK-21 are covered here — the
+ * empty-speaker lookup is an extra edge case worth pinning so a
+ * future refactor does not silently flip the behaviour.
+ */
+class TranscriptFormatterTest {
+
+    @Test
+    fun timestamp_minutesSeconds_underAnHour() {
+        assertEquals("00:00", TranscriptFormatter.timestamp(0L))
+        assertEquals("00:01", TranscriptFormatter.timestamp(1_000L))
+        assertEquals("01:05", TranscriptFormatter.timestamp(65_000L))
+        assertEquals("12:34", TranscriptFormatter.timestamp(754_000L))
+    }
+
+    @Test
+    fun timestamp_hoursMinutesSeconds_pastOneHour() {
+        assertEquals("1:00:00", TranscriptFormatter.timestamp(3_600_000L))
+        assertEquals("1:02:05", TranscriptFormatter.timestamp(3_725_000L))
+        assertEquals("10:00:00", TranscriptFormatter.timestamp(36_000_000L))
+    }
+
+    @Test
+    fun timestamp_negativeInputIsClampedToZero() {
+        // Negative offsets only show up with a misbehaving clock;
+        // the formatter must still produce a parseable string.
+        assertEquals("00:00", TranscriptFormatter.timestamp(-1L))
+        assertEquals("00:00", TranscriptFormatter.timestamp(Long.MIN_VALUE))
+    }
+
+    @Test
+    fun lines_resolvesSpeakerLabelFromSpeakerIndex() {
+        val segments = listOf(
+            SegmentEntity(
+                id = 1,
+                sessionId = 42,
+                startMs = 0,
+                endMs = 1_000,
+                text = "Hello",
+                speakerIndex = 0
+            ),
+            SegmentEntity(
+                id = 2,
+                sessionId = 42,
+                startMs = 3_000,
+                endMs = 4_000,
+                text = "Hi",
+                speakerIndex = 1
+            )
+        )
+        val speakers = listOf(
+            SpeakerEntity(sessionId = 42, speakerIndex = 0, label = "Alice"),
+            SpeakerEntity(sessionId = 42, speakerIndex = 1, label = "Bob")
+        )
+
+        val lines = TranscriptFormatter.lines(segments, speakers)
+        assertEquals(2, lines.size)
+        assertEquals(0L, lines[0].startMs)
+        assertEquals("Alice", lines[0].speaker)
+        assertEquals("Hello", lines[0].text)
+        assertEquals(3_000L, lines[1].startMs)
+        assertEquals("Bob", lines[1].speaker)
+        assertEquals("Hi", lines[1].text)
+    }
+
+    @Test
+    fun lines_unlabelledSegmentHasNullSpeaker() {
+        val segments = listOf(
+            SegmentEntity(
+                id = 1,
+                sessionId = 42,
+                startMs = 0,
+                endMs = 1_000,
+                text = "Hello",
+                speakerIndex = null
+            )
+        )
+
+        val lines = TranscriptFormatter.lines(segments, emptyList())
+        assertEquals(1, lines.size)
+        assertNull(lines[0].speaker)
+        assertEquals("Hello", lines[0].text)
+    }
+
+    @Test
+    fun lines_dropsSpeakerLabelWhenIndexDoesNotResolve() {
+        // speakerIndex points at a row that no longer exists (the
+        // diarizer rewrote the table between two emissions). The
+        // segment should fall back to an unlabelled line rather
+        // than crash or display "Speaker 3" with no matching row.
+        val segments = listOf(
+            SegmentEntity(
+                id = 1,
+                sessionId = 42,
+                startMs = 0,
+                endMs = 1_000,
+                text = "Hello",
+                speakerIndex = 2
+            )
+        )
+
+        val lines = TranscriptFormatter.lines(
+            segments,
+            listOf(
+                SpeakerEntity(sessionId = 42, speakerIndex = 0, label = "Alice"),
+                SpeakerEntity(sessionId = 42, speakerIndex = 1, label = "Bob")
+            )
+        )
+        assertEquals(1, lines.size)
+        assertNull(lines[0].speaker)
+    }
+
+    @Test
+    fun toText_formatsLabelledLinesWithSpeakerPrefix() {
+        val lines = listOf(
+            TranscriptLine(startMs = 0, speaker = "Speaker 1", text = "Hello"),
+            TranscriptLine(startMs = 3_000, speaker = "Speaker 2", text = "Hi")
+        )
+        assertEquals(
+            "[00:00] Speaker 1: Hello\n[00:03] Speaker 2: Hi",
+            TranscriptFormatter.toText(lines)
+        )
+    }
+
+    @Test
+    fun toText_unlabelledLineOmitsTheSpeaker() {
+        val lines = listOf(
+            TranscriptLine(startMs = 0, speaker = null, text = "Hello")
+        )
+        assertEquals(
+            "[00:00] Hello",
+            TranscriptFormatter.toText(lines)
+        )
+    }
+
+    @Test
+    fun toText_doesNotMergeConsecutiveSameSpeakerSegments() {
+        // Two back-to-back "Speaker 1" lines stay as two entries;
+        // the share-text reader should see the same per-segment
+        // granularity the on-screen list shows.
+        val lines = listOf(
+            TranscriptLine(startMs = 0, speaker = "Speaker 1", text = "Hello"),
+            TranscriptLine(startMs = 2_000, speaker = "Speaker 1", text = "again")
+        )
+        assertEquals(
+            "[00:00] Speaker 1: Hello\n[00:02] Speaker 1: again",
+            TranscriptFormatter.toText(lines)
+        )
+    }
+
+    @Test
+    fun toText_emptyInputProducesEmptyString() {
+        assertEquals("", TranscriptFormatter.toText(emptyList()))
+    }
+
+    @Test
+    fun toText_roundTripsViaLinesAcceptanceExample() {
+        // Cover both acceptance criteria in a single round-trip:
+        //  1. two labelled segments -> "[00:00] Speaker 1: Hello\n[00:03] Speaker 2: Hi"
+        //  2. unlabelled segment      -> "[00:00] Hello"
+        val labelledSegments = listOf(
+            SegmentEntity(
+                id = 1,
+                sessionId = 7,
+                startMs = 0,
+                endMs = 1_000,
+                text = "Hello",
+                speakerIndex = 0
+            ),
+            SegmentEntity(
+                id = 2,
+                sessionId = 7,
+                startMs = 3_000,
+                endMs = 4_000,
+                text = "Hi",
+                speakerIndex = 1
+            )
+        )
+        val labelledSpeakers = listOf(
+            SpeakerEntity(sessionId = 7, speakerIndex = 0, label = "Speaker 1"),
+            SpeakerEntity(sessionId = 7, speakerIndex = 1, label = "Speaker 2")
+        )
+        assertEquals(
+            "[00:00] Speaker 1: Hello\n[00:03] Speaker 2: Hi",
+            TranscriptFormatter.toText(
+                TranscriptFormatter.lines(labelledSegments, labelledSpeakers)
+            )
+        )
+
+        val unlabelledSegments = listOf(
+            SegmentEntity(
+                id = 1,
+                sessionId = 7,
+                startMs = 0,
+                endMs = 1_000,
+                text = "Hello",
+                speakerIndex = null
+            )
+        )
+        assertEquals(
+            "[00:00] Hello",
+            TranscriptFormatter.toText(
+                TranscriptFormatter.lines(unlabelledSegments, emptyList())
+            )
+        )
+    }
+}

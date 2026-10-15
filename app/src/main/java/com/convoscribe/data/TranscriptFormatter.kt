@@ -1,0 +1,94 @@
+package com.convoscribe.data
+
+import java.util.Locale
+
+/**
+ * One transcript line displayed to the user. [startMs] is the
+ * segment's start time in milliseconds; [speaker] is the user-facing
+ * label (`"Speaker 1"`, `"Alice"`, …) or `null` for an unlabelled
+ * segment; [text] is the ASR text verbatim.
+ */
+data class TranscriptLine(
+    val startMs: Long,
+    val speaker: String?,
+    val text: String
+)
+
+/**
+ * Pure helpers that turn the persisted [SegmentEntity] / [SpeakerEntity]
+ * rows into the user-facing transcript: formatted timestamps,
+ * resolved speaker labels and a plain-text export suitable for the
+ * system share sheet.
+ *
+ * Nothing in here touches Room or the UI layer; the screen and the
+ * ViewModel both call into it, and the unit test exercises it
+ * directly. The formatter is stateless so it lives as an `object`.
+ */
+object TranscriptFormatter {
+    /**
+     * Format [ms] as `mm:ss` (zero-padded minutes and seconds) for
+     * durations under one hour and `h:mm:ss` (unpadded hours) once
+     * the hour boundary is crossed. Negative inputs are clamped to
+     * zero — the diarizer only ever produces non-negative offsets
+     * but a hostile clock skew could in principle hand us one, and
+     * formatting `-1` as `"-1:00:00"` would render badly in the
+     * transcript.
+     */
+    fun timestamp(ms: Long): String {
+        val safe = if (ms < 0L) 0L else ms
+        val totalSeconds = safe / 1_000L
+        val hours = totalSeconds / 3_600L
+        val minutes = (totalSeconds % 3_600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) {
+            String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format(Locale.US, "%02d:%02d", minutes, seconds)
+        }
+    }
+
+    /**
+     * Resolve each segment's speaker label from [speakers] by
+     * matching [SegmentEntity.speakerIndex] to the
+     * [SpeakerEntity.speakerIndex] with the same index. Segments
+     * with a `null` speaker index stay unlabelled. The returned
+     * list mirrors the input order: callers pass the segments
+     * already ordered by `startMs ASC` and get the same order
+     * back.
+     *
+     * [speakers] is the per-session speaker list, already ordered
+     * by `speakerIndex ASC` (see [SpeakerDao.getForSession]); the
+     * lookup walks it directly instead of building a map because
+     * the list is small (1..5 entries in practice).
+     */
+    fun lines(segments: List<SegmentEntity>, speakers: List<SpeakerEntity>): List<TranscriptLine> =
+        segments.map { segment ->
+            val label = segment.speakerIndex?.let { idx ->
+                speakers.firstOrNull { it.speakerIndex == idx }?.label
+            }
+            TranscriptLine(
+                startMs = segment.startMs,
+                speaker = label,
+                text = segment.text
+            )
+        }
+
+    /**
+     * Render [lines] as plain text suitable for an email body or a
+     * share-sheet payload. Each line is either
+     * `"[<timestamp>] <speaker>: <text>"` or
+     * `"[<timestamp>] <text>"` when the segment is unlabelled, and
+     * lines are joined with `\n`. Consecutive lines from the same
+     * speaker are **not** merged — the user gets a per-segment
+     * entry that mirrors what the screen shows, so the shared
+     * transcript reads the same way on the recipient's side.
+     */
+    fun toText(lines: List<TranscriptLine>): String = lines.joinToString(separator = "\n") { line ->
+        val stamp = timestamp(line.startMs)
+        if (line.speaker.isNullOrEmpty()) {
+            "[$stamp] ${line.text}"
+        } else {
+            "[$stamp] ${line.speaker}: ${line.text}"
+        }
+    }
+}
