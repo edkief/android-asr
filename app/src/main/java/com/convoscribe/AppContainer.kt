@@ -5,6 +5,8 @@ import androidx.room.Room
 import com.convoscribe.asr.TranscriberFactory
 import com.convoscribe.audio.MicAudioSource
 import com.convoscribe.data.AppDatabase
+import com.convoscribe.data.EnrolledSpeakerRepository
+import com.convoscribe.data.EnrolledSpeakerStore
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.diarization.DiarizeSessionUseCase
 import com.convoscribe.diarization.DiarizerFactory
@@ -87,6 +89,20 @@ class AppContainer(val context: Context) {
     val sessionRepository: SessionRepository = SessionRepository(
         db = database,
         recordingsDir = File(context.filesDir, "recordings").apply { mkdirs() }
+    )
+
+    /**
+     * V2: enrolled speakers (a name + a reference embedding) are
+     * looked up after diarization to give a fresh recording
+     * real speaker names. The store is exposed as the interface
+     * so later tasks (enrollment UI, post-record name lookup)
+     * only depend on `EnrolledSpeakerStore` and stay clear of
+     * Room. Backed by the same [database] singleton as the
+     * session repository, so an upgrade from v1 lands on v2 in
+     * one shot.
+     */
+    val enrolledSpeakers: EnrolledSpeakerStore = EnrolledSpeakerRepository(
+        dao = database.enrolledSpeakerDao()
     )
 
     /**
