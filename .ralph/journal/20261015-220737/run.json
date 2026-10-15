@@ -1,0 +1,9 @@
+{
+  "status": "interrupted",
+  "iterations": 1,
+  "runId": "20261015-220737",
+  "historyDir": "/workspace/main/.ralph/history/20261015-220737",
+  "tasksPassed": 19,
+  "tasksTotal": 34,
+  "message": "Interrupted"
+}
