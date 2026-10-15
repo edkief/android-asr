@@ -11,4 +11,15 @@
     <string name="notification_recording_title">Recording</string>
     <string name="notification_recording_text">Tap to open ConvoScribe</string>
     <string name="notification_recording_action_stop">Stop</string>
+    <string name="record_title">New recording</string>
+    <string name="record_back">Back</string>
+    <string name="record_phase_loading">Loading speech model…</string>
+    <string name="record_phase_stopping">Finishing…</string>
+    <string name="record_error_mic_required">Microphone permission is required to record.</string>
+    <string name="record_start">Start</string>
+    <string name="record_stop">Stop</string>
+    <string name="record_error_unknown">Recording failed</string>
+    <string name="home_new_recording">New recording</string>
+    <string name="home_empty">No sessions yet</string>
+    <string name="session_placeholder_title">Session %1$d</string>
 </resources>

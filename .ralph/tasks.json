@@ -11,7 +11,7 @@
   { "id": "TASK-10", "passes": true },
   { "id": "TASK-11", "passes": true },
   { "id": "TASK-12", "passes": true },
-  { "id": "TASK-13", "passes": false },
+  { "id": "TASK-13", "passes": true },
   { "id": "TASK-14", "passes": false },
   { "id": "TASK-15", "passes": false },
   { "id": "TASK-16", "passes": false },

@@ -2,6 +2,54 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-13 — Recording screen with permission flow and live transcript
+
+Added `ui/record/RecordViewModel.kt`: thin ViewModel taking the singleton
+`RecordingController` and exposing `state` + `onNavigatedToSession()` (which calls
+`controller.consumeCompleted()`). The top-level `formatElapsed(ms: Long)` formatter
+sits in the same file: `mm:ss` (always two digits) under one hour, `h:mm:ss` once the
+elapsed time crosses an hour, negative input clamped to 0, locale pinned to `Locale.US`.
+Unit-tested by `ui/record/FormatElapsedTest.kt` with the three exact-spec assertions
+(0, 61_000, 3_600_000); no Android framework touched in the test.
+
+Added `ui/record/RecordScreen.kt` (route `record`): top-app-bar `"New recording"` with
+`Icons.AutoMirrored.Filled.ArrowBack` icon button. The runtime permission flow uses
+`rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions())`
+asking `RECORD_AUDIO` (and `POST_NOTIFICATIONS` on API 33+); a mic denial yields the
+string `Microphone permission is required to record.`, while a notification-only
+denial is silently ignored and recording still starts. Start button re-checks the
+permission at click time and calls
+`ContextCompat.startForegroundService(context, RecordingService.startIntent(context))`;
+Stop button calls `context.startService(RecordingService.stopIntent(context))`.
+Body: a `displayMedium` elapsed time, phase label (`LOADING` = "Loading speech
+model…", `STOPPING` = "Finishing…"), `LazyColumn` of `finalLines` with an
+`animateScrollToItem(itemCount - 1)` `LaunchedEffect` to keep the latest line in
+view, the partial text as the last row in italics on `onSurfaceVariant`, an error
+line in `colorScheme.error`, and a 96-dp round `Button` (mic icon
+`painterResource(R.drawable.ic_mic)` for IDLE, stop icon
+`painterResource(R.drawable.ic_stop)` for RECORDING, disabled otherwise).
+
+When `state.lastCompletedSessionId` becomes non-null the screen calls
+`navController.navigate("session/$id") { popUpTo("record") { inclusive = true } }`
+and then `vm.onNavigatedToSession()`. A `session/{id}` placeholder composable is
+registered in `AppNavHost.kt` showing `"Session $id"` (replaced by the real screen
+in TASK-14).
+
+`ui/AppNavHost.kt` now has the `record` and `session/{id}` routes; the placeholder
+and its route travel together in the same file. `ui/home/HomeScreen.kt` takes a
+`NavHostController` parameter and renders an `ExtendedFloatingActionButton` labelled
+`New recording` with a mic icon whose `onClick` reads the configured language off
+`settingsRepository.settings.value.asrLanguage` and computes
+`modelStore.missing(ModelCatalog.requiredFor(language))`; the FAB pushes `record` if
+the list is empty, otherwise `setup`.
+
+Added `res/drawable/ic_mic.xml` (24dp, viewport 24, mic `pathData`,
+`fillColor=#FF000000`) and `res/drawable/ic_stop.xml` (24dp, viewport 24,
+`pathData="M6,6h12v12H6z"`, `fillColor=#FF000000`); both used via
+`painterResource(...)`. Both back arrows use `Icons.AutoMirrored.Filled.ArrowBack`.
+
+Verify command exited 0: `./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`.
+
 ## 2026-10-15 — TASK-12 — Foreground RecordingService (microphone type) with notification
 
 Added `service/RecordingNotificationText.kt` with the pure formatter
