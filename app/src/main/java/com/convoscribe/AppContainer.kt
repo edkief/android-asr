@@ -2,8 +2,10 @@ package com.convoscribe
 
 import android.content.Context
 import androidx.room.Room
+import com.convoscribe.asr.TranscriberFactory
 import com.convoscribe.data.AppDatabase
 import com.convoscribe.data.SessionRepository
+import com.convoscribe.engine.sherpa.SherpaTranscriberFactory
 import com.convoscribe.models.ModelDownloader
 import com.convoscribe.models.ModelStore
 import com.convoscribe.settings.EncryptedSecretStore
@@ -77,5 +79,17 @@ class AppContainer(val context: Context) {
     val sessionRepository: SessionRepository = SessionRepository(
         db = database,
         recordingsDir = File(context.filesDir, "recordings").apply { mkdirs() }
+    )
+
+    /**
+     * Factory the recording screen will use (in TASK-12) to ask for
+     * a fresh streaming transcriber per session. Wired to the
+     * sherpa-onnx engine because that's the only ASR we ship
+     * today; the fun interface keeps the recording screen engine-
+     * agnostic.
+     */
+    val transcriberFactory: TranscriberFactory = SherpaTranscriberFactory(
+        store = modelStore,
+        settings = settingsRepository
     )
 }

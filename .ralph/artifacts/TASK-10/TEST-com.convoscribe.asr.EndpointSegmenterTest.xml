@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.convoscribe.asr.EndpointSegmenterTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-15T16:47:40" hostname="android-asr-main" time="0.082">
+  <properties/>
+  <testcase name="accept_secondSegmentStartsAtFirstSegmentEndMs" classname="com.convoscribe.asr.EndpointSegmenterTest" time="0.078"/>
+  <testcase name="finish_emitsFinalForPendingTextWithEndMsAtTotalAudioMs" classname="com.convoscribe.asr.EndpointSegmenterTest" time="0.0"/>
+  <testcase name="accept_identicalConsecutivePartialsAreEmittedOnce" classname="com.convoscribe.asr.EndpointSegmenterTest" time="0.001"/>
+  <testcase name="totalSamples_tracksAcceptedChunkSizes" classname="com.convoscribe.asr.EndpointSegmenterTest" time="0.0"/>
+  <testcase name="finish_emitsEmptyPartialWhenNothingIsPending" classname="com.convoscribe.asr.EndpointSegmenterTest" time="0.0"/>
+  <testcase name="accept_emptyChunkIsANoOp" classname="com.convoscribe.asr.EndpointSegmenterTest" time="0.0"/>
+  <testcase name="close_closesBackend" classname="com.convoscribe.asr.EndpointSegmenterTest" time="0.001"/>
+  <testcase name="accept_endpointWithBlankTextResetsButEmitsNoFinal" classname="com.convoscribe.asr.EndpointSegmenterTest" time="0.0"/>
+  <testcase name="accept_threeChunksWithEndpointOnTheThird" classname="com.convoscribe.asr.EndpointSegmenterTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

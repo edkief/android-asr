@@ -8,7 +8,7 @@
   { "id": "TASK-7", "passes": true },
   { "id": "TASK-8", "passes": true },
   { "id": "TASK-9", "passes": true },
-  { "id": "TASK-10", "passes": false },
+  { "id": "TASK-10", "passes": true },
   { "id": "TASK-11", "passes": false },
   { "id": "TASK-12", "passes": false },
   { "id": "TASK-13", "passes": false },

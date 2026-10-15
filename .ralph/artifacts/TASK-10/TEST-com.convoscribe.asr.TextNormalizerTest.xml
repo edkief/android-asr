@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.convoscribe.asr.TextNormalizerTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-15T16:47:40" hostname="android-asr-main" time="0.007">
+  <properties/>
+  <testcase name="normalize_mixedCaseOnlyCapitalisesFirstLetter" classname="com.convoscribe.asr.TextNormalizerTest" time="0.0"/>
+  <testcase name="normalize_emptyStaysEmpty" classname="com.convoscribe.asr.TextNormalizerTest" time="0.001"/>
+  <testcase name="normalize_preservesStandaloneILowercaseInMixedCase" classname="com.convoscribe.asr.TextNormalizerTest" time="0.0"/>
+  <testcase name="normalize_noLettersStillCollapsesWhitespace" classname="com.convoscribe.asr.TextNormalizerTest" time="0.0"/>
+  <testcase name="normalize_allUppercaseSingleLetterStaysSingle" classname="com.convoscribe.asr.TextNormalizerTest" time="0.004"/>
+  <testcase name="normalize_allUppercaseCollapsesWhitespaceAndFixesCapitalisation" classname="com.convoscribe.asr.TextNormalizerTest" time="0.0"/>
+  <testcase name="normalize_alreadyMixedCaseIsUnchanged" classname="com.convoscribe.asr.TextNormalizerTest" time="0.0"/>
+  <testcase name="normalize_whitespaceOnlyCollapsesToEmpty" classname="com.convoscribe.asr.TextNormalizerTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -212,3 +212,45 @@ plus CMake 3.27.9 (needed later by sherpa-onnx and the prereqs check).
 Every step is skipped on a re-run; second run exits 0 with no curl
 downloads. Acceptance: all eight hosts OK, `javac 17`, `Gradle 8.11.1`,
 `sdkmanager --list_installed` shows the four packages, `$ANDROID_NDK/ndk-build` is executable.
+
+## 2026-10-15 — TASK-10 — Streaming transcriber: endpoint segmenter, text normalizer and sherpa backend
+
+Added `asr/TranscriptEvent.kt` (sealed interface with `Partial(text)` and `Final(text, startMs, endMs)`),
+`asr/RecognizerBackend.kt` (`interface : Closeable` with `acceptWaveform/decodeAvailable/currentText/isEndpoint/reset/inputFinished`),
+`asr/TextNormalizer.kt` (`object` whose `normalize(raw)` trims + collapses whitespace, lower-cases all-uppercase text and
+fixes the leading capital plus the standalone `\bi\b` -> `I` substitutions, otherwise only capitalises the first
+character; empty in / empty out),
+`asr/StreamingTranscriber.kt` (interface + `class EndpointSegmenter(backend, sampleRate=16000)` carrying
+`totalSamples` (running counter, exposed for tests) + `segmentStartSample`, suppressing consecutive identical
+`Partial`s, treating blank-text endpoints as "reset + empty Partial", and emitting a Final on `finish()` when any
+text is pending),
+`engine/sherpa/SherpaRecognizerBackend.kt` (sherpa-onnx 1.13.8 `OnlineRecognizer(assetManager=null, OnlineRecognizerConfig(...))`
++ `recognizer.createStream()`, mapping acceptWaveform / decodeAvailable(currentText/isEndpoint/reset/inputFinished/close
+to the documented sherpa calls; FeatureConfig 16 kHz / 80 dim, OnlineTransducerModelConfig for zipformer2, EndpointConfig
+rules 1=2.4s, 2=0.8s after non-silence, 3=20s, greedy_search)),
+`asr/TranscriberFactory.kt` (`fun interface TranscriberFactory { fun create(language: String): StreamingTranscriber }`),
+`engine/sherpa/SherpaTranscriberFactory.kt` (`class(store, settings)` returning
+`EndpointSegmenter(SherpaRecognizerBackend(store.bundleDir(bundle), bundle.asr!!, settings.settings.value.numThreads))`,
+throwing `IllegalStateException("Model not installed: <id>")` when `!store.isInstalled(bundle)`).
+Wired `AppContainer.transcriberFactory = SherpaTranscriberFactory(modelStore, settingsRepository)`.
+Overloaded `audio.samplesToMs(samples: Long, sampleRate: Int = AudioSpec.SAMPLE_RATE): Long` so the segmenter can stamp
+timestamps at the negotiated rate without duplicating the formula.
+
+Tests under `app/src/test/java/com/convoscribe/asr/`:
+* `TextNormalizerTest` (8 tests): the four explicit examples from the spec ("  HELLO   I AM HERE " -> "Hello I am here",
+"bonjour à tous" -> "Bonjour à tous", "" -> "", "Already Mixed" unchanged) plus whitespace-only, single-letter "I",
+mixed-case "inline items" (must not capitalise standalone `i`), and a no-letters smoke case.
+* `EndpointSegmenterTest` (9 tests) drives a private `ScriptedBackend` (script = list of `(text, isEndpoint)` per
+`acceptWaveform`, initial state blank/no-endpoint, holds last entry when the script runs out, counts `reset()` calls):
+three 1600-sample chunks with the endpoint on the third (Final(Hello world, 0, 300) + Partial(""), resetCount == 1);
+five chunks verifying the second segment starts at the first segment's `endMs` (Final("Foo", 300, 500)); blank-text
+endpoint -> no Final but reset(); three identical partials -> exactly one emission; finish() emits Final at
+`samplesToMs(totalSamples)`; finish() with a blank currentText emits only Partial(""); empty `accept` is a true no-op
+(no wakeup, `totalSamples` unchanged, recognizer state untouched); `totalSamples` only advances for non-empty chunks;
+segmenter.close() forwards to the backend.
+
+Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (84 unit tests, all pass; ktlint, lint, assembleDebug clean). Sherpa classes are only referenced from
+`com.convoscribe.engine.sherpa.*` and no unit test instantiates them, so the JVM-side `System.loadLibrary("sherpa-onnx-jni")`
+in `OnlineRecognizer`'s static initializer never runs in tests.

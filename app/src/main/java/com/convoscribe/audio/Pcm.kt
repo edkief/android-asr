@@ -26,9 +26,9 @@ fun ShortArray.toFloatSamples(): FloatArray {
 }
 
 /**
- * Convert a sample count to milliseconds at [AudioSpec.SAMPLE_RATE].
- * Used to translate streaming ASR timestamps and
- * `AudioRecord` chunk counts into the millisecond range the UI and
- * the diarization segments share.
+ * Convert a sample count to milliseconds at [sampleRate] (defaults
+ * to [AudioSpec.SAMPLE_RATE]). Used to translate streaming ASR
+ * timestamps and `AudioRecord` chunk counts into the millisecond
+ * range the UI and the diarization segments share.
  */
-fun samplesToMs(samples: Long): Long = samples * 1000L / AudioSpec.SAMPLE_RATE
+fun samplesToMs(samples: Long, sampleRate: Int = AudioSpec.SAMPLE_RATE): Long = samples * 1000L / sampleRate.toLong()
