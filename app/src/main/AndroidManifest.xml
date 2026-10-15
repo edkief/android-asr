@@ -16,6 +16,22 @@
     -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!--
+        Foreground-service plumbing (TASK-12). Without
+        `FOREGROUND_SERVICE` the OS rejects the start of any
+        foreground service; `FOREGROUND_SERVICE_MICROPHONE` is the
+        typed permission Android 14+ requires for services that
+        use the microphone (the corresponding service must also
+        declare `foregroundServiceType="microphone"`).
+        `WAKE_LOCK` keeps the CPU alive while a recording loop is
+        running, and `POST_NOTIFICATIONS` is the Android 13+
+        runtime permission for showing the persistent notification.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:name=".ConvoApp"
         android:label="@string/app_name"
@@ -41,6 +57,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!--
+            Foreground recording service (TASK-12). `exported` is
+            `false` because the only legitimate caller is our own
+            app code, via the typed `start` / `stop` PendingIntents
+            (the stop PendingIntent goes through `getService` and
+            is therefore scoped to this UID). The
+            `foregroundServiceType="microphone"` is mandatory
+            starting Android 14 — without it the OS will refuse to
+            keep the service in the foreground while the mic is
+            hot.
+        -->
+        <service
+            android:name=".service.RecordingService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
     </application>
 
 </manifest>

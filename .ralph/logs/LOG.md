@@ -2,6 +2,68 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-12 — Foreground RecordingService (microphone type) with notification
+
+Added `service/RecordingNotificationText.kt` with the pure formatter
+`fun recordingNotificationText(elapsedMs: Long): String` returning `"Recording – mm:ss"`
+under an hour and `"Recording – h:mm:ss"` once the elapsed time crosses one hour (hours
+single-digit, minutes and seconds always two digits, `Locale.US` so the locale never
+inverts the colon); negative input clamps to 0 so a transient timer glitch cannot throw
+in the notification builder. Notification text refresh is throttled to at most once per
+second in the service via `SystemClock.elapsedRealtime()`.
+
+Added `service/RecordingService.kt` (`class RecordingService : Service()`,
+`onBind` returns null, `private val scope = CoroutineScope(SupervisorJob()
++ Dispatchers.Main.immediate)`). Companion: `ACTION_START = "com.convoscribe.START"` /
+`ACTION_STOP = "com.convoscribe.STOP"`, plus `fun startIntent(context)` /
+`fun stopIntent(context)` factories. `onStartCommand` is a switch over the action:
+`ACTION_START` creates the `recording` notification channel (`IMPORTANCE_LOW`, name
+"Recording"), calls
+`ServiceCompat.startForeground(this, 1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)`
+(ServiceCompat itself swallows the constant below API 30, which doesn't apply since
+`minSdk = 29` but the call site stays future-proof if `minSdk` is ever lowered),
+acquires a partial `PowerManager.WakeLock` tagged `ConvoScribe:recording` with a 1 h
+safety timeout, then `controller.start(scope)`. `ACTION_STOP` runs
+`scope.launch { controller.stop(); releaseWakeLock(); ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE); stopSelf() }`. Returns
+`START_NOT_STICKY` in every branch (an unknown action with IDLE state also stops self).
+
+Notification built by `buildNotification(elapsedMs)`: small icon `R.drawable.ic_launcher_foreground`,
+title `"Recording"`, content text from `recordingNotificationText(elapsedMs)`,
+ongoing + only-alert-once + no `showWhen`, category `SERVICE`, content intent is a
+`PendingIntent.getActivity(MainActivity, FLAG_IMMUTABLE | FLAG_UPDATE_CURRENT)` with
+`FLAG_ACTIVITY_SINGLE_TOP or FLAG_ACTIVITY_CLEAR_TOP`, action "Stop" attached as
+`PendingIntent.getService(stopIntent(this), FLAG_IMMUTABLE | FLAG_UPDATE_CURRENT)`.
+After `startForeground` the service observes `controller.state` (launched in the
+service scope) and, while a session is active, refreshes the notification text at most
+once a second; if the controller emits `phase == IDLE` with a non-null `error` while
+the service is alive (e.g. the controller's own catch arm failed during start), the
+observer releases the wake lock, calls `ServiceCompat.stopForeground(this, STOP_FOREGROUND_REMOVE)`
+and `stopSelf()` so a dead foreground notification can't outlive the service.
+`onDestroy` releases the wake lock and cancels the scope (which cancels the state observer).
+
+Updated `AndroidManifest.xml`: added `<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />`,
+`FOREGROUND_SERVICE_MICROPHONE`, `POST_NOTIFICATIONS`, `WAKE_LOCK` (the existing
+`RECORD_AUDIO` already covered the mic itself), and declared
+`<service android:name=".service.RecordingService" android:exported="false" android:foregroundServiceType="microphone" />`
+inside `<application>`. Added five strings to `res/values/strings.xml`:
+`notification_channel_recording`, `notification_channel_recording_description`,
+`notification_recording_title`, `notification_recording_text`,
+`notification_recording_action_stop`. The container is read with
+`(application as ConvoApp).container.recordingController`.
+
+Tests under `app/src/test/java/com/convoscribe/service/RecordingNotificationTextTest.kt`:
+8 cases covering the two acceptance examples (65 000 ms → `"Recording – 01:05"`,
+3 725 000 ms → `"Recording – 1:02:05"`), sub-minute zero-padding, the 59:59 → 59:59 boundary,
+the 1 h == `1:00:00` crossover into `h:mm:ss`, the 2 h padding invariant ("2:03:04"), zero,
+and a negative-input fallback.
+
+Verify command `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (the merged manifest has the typed service and all five permissions;
+lintDebug reports 0 errors — the only foreground-service-related lint findings are
+informational `NewApi` warnings for the typed-foreground constant and the typed
+`stopForeground(int)` overload, both expected since `minSdk = 29` and explained in
+the source). ktlint, 81 unit tests, lint, and assembleDebug all pass.
+
 ## 2026-10-15 — TASK-11 — RecordingController: wire audio, WAV, transcriber and database
 Added `recording/RecordingState.kt` with `enum RecordingPhase { IDLE, LOADING, RECORDING, STOPPING }`
 and `data class RecordingState(phase, sessionId, elapsedMs, partialText, finalLines,

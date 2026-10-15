@@ -6,4 +6,9 @@
     <string name="setup_progress">%1$d MB / %2$d MB</string>
     <string name="setup_download">Download</string>
     <string name="setup_retry">Retry</string>
+    <string name="notification_channel_recording">Recording</string>
+    <string name="notification_channel_recording_description">Shows while ConvoScribe is capturing audio.</string>
+    <string name="notification_recording_title">Recording</string>
+    <string name="notification_recording_text">Tap to open ConvoScribe</string>
+    <string name="notification_recording_action_stop">Stop</string>
 </resources>

@@ -1,0 +1,38 @@
+package com.convoscribe.service
+
+import java.util.Locale
+import kotlin.math.max
+
+/**
+ * Format the text we display in the foreground-recording
+ * notification while a session is in progress.
+ *
+ *  - `mm:ss` while the elapsed time stays under an hour.
+ *  - `h:mm:ss` (single-digit hours, always two-digit minutes/seconds)
+ *    once it crosses an hour, so the user can tell at a glance that
+ *    a long meeting is still going.
+ *
+ * The output is rebuilt from the freshest elapsed-counter whenever
+ * the foreground service's state flow ticks, but at most once a
+ * second (see [RecordingService]) — the format is cheap so the
+ * formatter does not carry state of its own.
+ *
+ * Negative inputs are clamped to zero so a transient timer glitch
+ * (e.g. `AudioRecord` paused without the controller noticing)
+ * cannot throw here.
+ */
+fun recordingNotificationText(elapsedMs: Long): String {
+    val safe = max(0L, elapsedMs)
+    val totalSeconds = safe / 1_000L
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    val body = if (hours > 0L) {
+        // h:mm:ss — single-digit hours, padded minutes/seconds.
+        String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        // mm:ss — always two digits each.
+        String.format(Locale.US, "%02d:%02d", minutes, seconds)
+    }
+    return "Recording – $body"
+}
