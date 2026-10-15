@@ -1,3 +1,34 @@
+## 2026-10-15 — TASK-25: Prompt builder and transcript truncation
+
+Added `llm/TranscriptTruncator.kt` and `llm/PromptBuilder.kt`, with tests under
+`app/src/test/java/com/convoscribe/llm/`.
+
+`TranscriptTruncator.fit(transcript, maxChars)` returns the input unchanged when
+it fits the budget; otherwise it slices the first `maxChars / 2` characters
+(trimmed back to the last newline) and the last `maxChars / 2 - 80` characters
+(cut forward from the first newline), joins them with a single
+`\n[… N characters omitted …]\n` marker, and trims one trailing newline so the
+output ends with the content of the last line.
+
+`PromptBuilder` exposes the exact `SUMMARY_SYSTEM` and `QA_SYSTEM_PREFIX`
+strings the spec calls for, plus `summary(...)` (system + user messages, the
+user message starts with `Transcript:`) and `question(...)` (system message
+wrapping the fitted transcript + last six user/assistant history turns +
+trimmed question). The truncation budget is passed in by the caller so the
+ViewModel picks it from the chat model's context window.
+
+Tests pin every acceptance criterion: a short transcript returns unchanged;
+the 10 000-char / 100-line transcript fitted to 2 000 stays in budget,
+contains `characters omitted`, starts with the first line and ends with the
+last, and no line is cut mid-way; `summary` returns 2 messages; `question`
+keeps only the last six history turns and trims the final question; the
+constants match the spec verbatim; truncation never exceeds the budget across
+many budgets.
+
+Verify command `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+exits 0 (ktlint clean, 237 tests including 16 new, lintDebug clean, assembleDebug
+succeeds).
+
 ## 2026-10-15 — TASK-24: Settings screen (LLM endpoint, transcription, speakers)
 
 Added the settings screen at `ui/settings/SettingsScreen.kt` and the supporting
