@@ -1,0 +1,50 @@
+{
+  "harness": "pi",
+  "maxIterations": 20,
+  "pinTask": true,
+  "timeouts": {
+    "iterationMs": 2700000,
+    "inactivityMs": 300000,
+    "wrapUpMs": 600000,
+    "confirmMs": 300000,
+    "askMs": 0
+  },
+  "retries": {
+    "providerRetriesPerIteration": 3,
+    "iterationRetries": 1,
+    "earlyStopResumes": 2,
+    "backoffMs": 15000
+  },
+  "stall": {
+    "maxUnproductiveIterations": 3,
+    "maxTimeoutsPerTask": 2
+  },
+  "assess": {
+    "mode": "off"
+  },
+  "escalation": {
+    "enabled": false
+  },
+  "permissions": {
+    "fallback": "allow",
+    "deny": ["git push", "git remote", "rm -rf /", "shutdown", "reboot"]
+  },
+  "git": {
+    "push": "never",
+    "forcePush": false,
+    "remote": "origin"
+  },
+  "ui": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 4280,
+    "push": {
+      "enabled": true,
+      "subject": "mailto:you@example.com"
+    }
+  },
+  "log": {
+    "format": "text",
+    "level": "info"
+  }
+}
