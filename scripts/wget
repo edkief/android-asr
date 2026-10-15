@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# shim for `wget` -> curl.
+# sherpa-onnx's `build-android-arm64-v8a.sh` calls `wget -c -q URL` to fetch
+# a prebuilt onnxruntime release zip. This container has no wget, so
+# `scripts/build-sherpa-onnx.sh` prepends this directory to PATH and we
+# translate the small subset of flags actually used.
+
+set -e
+
+output=""
+positional=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -c|-q|--quiet|--continue)
+      shift ;;
+    -O)
+      output="$2"; shift 2 ;;
+    --output-document=*)
+      output="${1#--output-document=}"; shift ;;
+    -*)
+      # ignore unknown options we don't use
+      shift ;;
+    *)
+      positional+=("$1"); shift ;;
+  esac
+done
+
+url="${positional[0]}"
+if [[ -z "$url" ]]; then
+  echo "wget-shim: no URL given" >&2
+  exit 1
+fi
+
+if [[ -z "$output" ]]; then
+  output="$(basename "$url")"
+fi
+
+exec curl --fail --location --silent --show-error \
+  --retry 3 --retry-delay 5 \
+  -o "$output" "$url"

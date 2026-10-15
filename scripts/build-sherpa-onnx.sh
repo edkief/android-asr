@@ -47,6 +47,15 @@ log() {
   echo "[build-sherpa-onnx] $*"
 }
 
+# sherpa-onnx's build-android-arm64-v8a.sh calls `wget` to fetch a prebuilt
+# onnxruntime. This container has no wget, so put our shim first on PATH
+# (scripts/wget -> curl, provided by the repo's tooling).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [[ -x "$SCRIPT_DIR/wget" ]]; then
+  PATH="$SCRIPT_DIR:$PATH"
+  export PATH
+fi
+
 if [[ "$FORCE" -eq 1 ]]; then
   log "--force given: wiping $WORK"
   rm -rf "$WORK"
@@ -90,9 +99,10 @@ if [[ ! -f "$QNN_INCLUDE_DIR/include/QNN/QnnInterface.h" ]]; then
   download \
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models-qnn/qnn-include-$QNN_VERSION.tar.bz2" \
     "$WORK/qnn-include-$QNN_VERSION.tar.bz2"
+  # The tarball has a top-level qnn-include-<ver>/ directory; extract into
+  # $WORK so QNN_INCLUDE_DIR ends up at $WORK/qnn-include-<ver>/include/...
   rm -rf "$QNN_INCLUDE_DIR"
-  mkdir -p "$QNN_INCLUDE_DIR"
-  tar -xjf "$WORK/qnn-include-$QNN_VERSION.tar.bz2" -C "$QNN_INCLUDE_DIR"
+  tar -xjf "$WORK/qnn-include-$QNN_VERSION.tar.bz2" -C "$WORK"
   rm -f "$WORK/qnn-include-$QNN_VERSION.tar.bz2"
 else
   log "Reusing existing QNN headers at $QNN_INCLUDE_DIR"
@@ -104,8 +114,7 @@ if [[ ! -f "$QNN_LIBS_DIR/libQnnHtp.so" ]]; then
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models-qnn/qnn-libs-$QNN_VERSION.tar.bz2" \
     "$WORK/qnn-libs-$QNN_VERSION.tar.bz2"
   rm -rf "$QNN_LIBS_DIR"
-  mkdir -p "$QNN_LIBS_DIR"
-  tar -xjf "$WORK/qnn-libs-$QNN_VERSION.tar.bz2" -C "$QNN_LIBS_DIR"
+  tar -xjf "$WORK/qnn-libs-$QNN_VERSION.tar.bz2" -C "$WORK"
   rm -f "$WORK/qnn-libs-$QNN_VERSION.tar.bz2"
 else
   log "Reusing existing QNN runtime libraries at $QNN_LIBS_DIR"
