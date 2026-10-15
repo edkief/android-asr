@@ -69,6 +69,10 @@ android {
     }
 }
 
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(files(sherpaJar))
     implementation(libs.androidx.core.ktx)

@@ -1,0 +1,38 @@
+package com.convoscribe.data
+
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+/**
+ * One transcript line: a stretch of speech between two ASR endpoints
+ * (roughly one utterance) along with the speaker label assigned by
+ * diarization. [speakerIndex] is `null` until diarization has run;
+ * after that it is a 0-based index into the session's [SpeakerEntity]
+ * rows (or `null` again if the segment was unlabelled).
+ *
+ * The `onDelete = CASCADE` foreign key means deleting a session
+ * drops its segments in the same transaction, which is what the
+ * repository relies on.
+ */
+@Entity(
+    tableName = "segments",
+    foreignKeys = [
+        ForeignKey(
+            entity = SessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("sessionId")]
+)
+data class SegmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    val startMs: Long,
+    val endMs: Long,
+    val text: String,
+    val speakerIndex: Int? = null
+)

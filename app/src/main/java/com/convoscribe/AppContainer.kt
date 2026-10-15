@@ -1,6 +1,9 @@
 package com.convoscribe
 
 import android.content.Context
+import androidx.room.Room
+import com.convoscribe.data.AppDatabase
+import com.convoscribe.data.SessionRepository
 import com.convoscribe.models.ModelDownloader
 import com.convoscribe.models.ModelStore
 import com.convoscribe.settings.EncryptedSecretStore
@@ -50,5 +53,29 @@ class AppContainer(val context: Context) {
     val settingsRepository = SettingsRepository(
         prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE),
         secrets = EncryptedSecretStore(context)
+    )
+
+    /**
+     * Room database holding sessions, transcript segments, speaker
+     * labels and LLM chat messages. The file lives at
+     * `convoscribe.db` inside the app's data directory; the
+     * generated schema is committed at `app/schemas/` for future
+     * migrations.
+     */
+    val database: AppDatabase = Room.databaseBuilder(
+        context,
+        AppDatabase::class.java,
+        AppDatabase.NAME
+    ).build()
+
+    /**
+     * High-level session/store façade over [database]. Recordings
+     * land in `filesDir/recordings/<id>.wav`; the repository owns
+     * the lifetime of those files (created on session start,
+     * removed on delete).
+     */
+    val sessionRepository: SessionRepository = SessionRepository(
+        db = database,
+        recordingsDir = File(context.filesDir, "recordings").apply { mkdirs() }
     )
 }

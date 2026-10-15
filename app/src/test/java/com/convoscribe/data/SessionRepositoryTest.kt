@@ -1,0 +1,239 @@
+package com.convoscribe.data
+
+import android.content.Context
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import app.cash.turbine.test
+import java.io.File
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+/**
+ * Unit tests for [SessionRepository]. Robolectric gives us a real
+ * Android [Context] (so [androidx.room.Room] can wire SQLite), and
+ * `allowMainThreadQueries()` keeps the DAO calls synchronous so we
+ * can assert on them directly without a dispatcher dance.
+ */
+@RunWith(RobolectricTestRunner::class)
+class SessionRepositoryTest {
+
+    private lateinit var context: Context
+    private lateinit var db: AppDatabase
+    private lateinit var recordingsDir: File
+    private lateinit var repo: SessionRepository
+
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        // Use a fresh directory under the test app's files dir for
+        // each test so we can assert on file lifecycle.
+        recordingsDir = File(context.filesDir, "recordings-test-${System.nanoTime()}")
+        recordingsDir.mkdirs()
+        repo = SessionRepository(db, recordingsDir)
+    }
+
+    @After
+    fun tearDown() {
+        db.close()
+        if (recordingsDir.exists()) {
+            recordingsDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun createSession_returnsIdAndStampsAudioPath() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        assertTrue("id should be > 0", id > 0)
+
+        val row = repo.getSession(id)
+        assertNotNull(row)
+        assertEquals("Test", row!!.title)
+        assertEquals("en", row.language)
+        assertEquals(SessionStatus.RECORDING, row.status)
+        assertTrue(
+            "audioPath should end with /<id>.wav, was ${row.audioPath}",
+            row.audioPath.endsWith("/$id.wav")
+        )
+    }
+
+    @Test
+    fun observeSegments_returnsRowsOrderedByStartMs() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+
+        // Insert out of order to prove the ORDER BY is doing the work.
+        repo.addSegment(id, startMs = 500, endMs = 1000, text = "second")
+        repo.addSegment(id, startMs = 0, endMs = 500, text = "first")
+        repo.addSegment(id, startMs = 1200, endMs = 1500, text = "third")
+
+        val segments = repo.observeSegments(id).first()
+        assertEquals(listOf("first", "second", "third"), segments.map { it.text })
+    }
+
+    @Test
+    fun observeSegments_emitsViaFlowWhenNewRowsArrive() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        repo.addSegment(id, startMs = 0, endMs = 100, text = "a")
+
+        repo.observeSegments(id).test {
+            val first = awaitItem()
+            assertEquals(listOf("a"), first.map { it.text })
+
+            repo.addSegment(id, startMs = 100, endMs = 200, text = "b")
+            val second = awaitItem()
+            assertEquals(listOf("a", "b"), second.map { it.text })
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun applyDiarization_setsSpeakerIndexCreatesLabelsAndStatus() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        val s1 = repo.addSegment(id, startMs = 0, endMs = 1000, text = "hello")
+        val s2 = repo.addSegment(id, startMs = 1000, endMs = 2000, text = "world")
+        val s3 = repo.addSegment(id, startMs = 2000, endMs = 3000, text = "...")
+
+        repo.applyDiarization(
+            sessionId = id,
+            assignments = mapOf(s1 to 0, s2 to 1, s3 to null),
+            speakerCount = 2
+        )
+
+        val session = repo.getSession(id)!!
+        assertEquals(SessionStatus.DIARIZED, session.status)
+
+        val segments = repo.getSegments(id)
+        assertEquals(listOf(0, 1, null), segments.map { it.speakerIndex })
+
+        val speakers = repo.getSpeakers(id)
+        assertEquals(
+            listOf("Speaker 1" to 0, "Speaker 2" to 1),
+            speakers.map { it.label to it.speakerIndex }
+        )
+    }
+
+    @Test
+    fun applyDiarization_calledAgainReplacesSpeakers() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        val s1 = repo.addSegment(id, startMs = 0, endMs = 1000, text = "a")
+        val s2 = repo.addSegment(id, startMs = 1000, endMs = 2000, text = "b")
+
+        // First diarization: 3 speakers.
+        repo.applyDiarization(
+            sessionId = id,
+            assignments = mapOf(s1 to 2, s2 to 0),
+            speakerCount = 3
+        )
+        val first = repo.getSpeakers(id)
+        assertEquals(3, first.size)
+        assertEquals(
+            listOf("Speaker 1", "Speaker 2", "Speaker 3"),
+            first.map { it.label }
+        )
+
+        // Second diarization: only 1 speaker. Old speaker rows must
+        // be gone, segments must point at index 0 (or null).
+        repo.applyDiarization(
+            sessionId = id,
+            assignments = mapOf(s1 to 0, s2 to 0),
+            speakerCount = 1
+        )
+        val second = repo.getSpeakers(id)
+        assertEquals(1, second.size)
+        assertEquals("Speaker 1", second[0].label)
+        assertEquals(0, second[0].speakerIndex)
+        assertEquals(listOf(0, 0), repo.getSegments(id).map { it.speakerIndex })
+    }
+
+    @Test
+    fun deleteSession_removesSessionAndCascadesRowsAndAudioFile() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        // Create the WAV file the way the recorder would, so
+        // deleteSession has something to remove.
+        val audio = File(recordingsDir, "$id.wav")
+        audio.writeBytes(byteArrayOf(1, 2, 3, 4))
+        assertTrue(audio.exists())
+
+        val segId = repo.addSegment(id, startMs = 0, endMs = 100, text = "x")
+        repo.applyDiarization(
+            sessionId = id,
+            assignments = mapOf(segId to 0),
+            speakerCount = 1
+        )
+        repo.addChatMessage(
+            ChatMessageEntity(
+                sessionId = id,
+                kind = MessageKind.SUMMARY,
+                role = MessageRole.ASSISTANT,
+                content = "summary",
+                createdAt = 1L
+            )
+        )
+        repo.addChatMessage(
+            ChatMessageEntity(
+                sessionId = id,
+                kind = MessageKind.QA,
+                role = MessageRole.USER,
+                content = "Q?",
+                createdAt = 2L
+            )
+        )
+
+        repo.deleteSession(id)
+
+        // Session row gone.
+        assertNull(repo.getSession(id))
+        // Cascade: no segments, no speakers, no chat messages.
+        assertTrue(repo.getSegments(id).isEmpty())
+        assertTrue(repo.getSpeakers(id).isEmpty())
+        // Chat is observed by kind; both kinds must be empty.
+        assertEquals(emptyList<ChatMessageEntity>(), repo.observeChat(id, MessageKind.SUMMARY).first())
+        assertEquals(emptyList<ChatMessageEntity>(), repo.observeChat(id, MessageKind.QA).first())
+        // WAV file removed.
+        assertFalse(audio.exists())
+    }
+
+    @Test
+    fun deleteSession_unknownIdIsANoOp() = runTest {
+        // No exception, no row created.
+        repo.deleteSession(99999L)
+        assertNull(repo.getSession(99999L))
+    }
+
+    @Test
+    fun finishRecording_setsDurationAndStatus() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        repo.finishRecording(id, durationMs = 12_345L)
+        val row = repo.getSession(id)!!
+        assertEquals(12_345L, row.durationMs)
+        assertEquals(SessionStatus.TRANSCRIBED, row.status)
+    }
+
+    @Test
+    fun observeAllSessions_ordersByCreatedAtDescending() = runTest {
+        val id1 = repo.createSession(title = "first", language = "en")
+        // Make sure createdAt differs — System.currentTimeMillis()
+        // has only millisecond precision, so a short sleep between
+        // inserts is enough.
+        Thread.sleep(5)
+        val id2 = repo.createSession(title = "second", language = "en")
+        Thread.sleep(5)
+        val id3 = repo.createSession(title = "third", language = "en")
+
+        val all = repo.observeAllSessions().first()
+        assertEquals(listOf(id3, id2, id1), all.map { it.id })
+    }
+}
