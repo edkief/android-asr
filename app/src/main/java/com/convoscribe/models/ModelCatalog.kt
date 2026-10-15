@@ -1,0 +1,161 @@
+package com.convoscribe.models
+
+/**
+ * What kind of model a bundle represents. Used by the engines and the
+ * downloader to pick the right on-disk paths and engine code.
+ */
+enum class ModelKind { ASR, SEGMENTATION, EMBEDDING }
+
+/**
+ * One file that belongs to a [ModelBundle]: its on-disk name (which may
+ * contain a sub-directory, e.g. `test_wavs/0.wav`), the URL to download
+ * it from and the expected size in bytes. The downloader uses the size
+ * for progress reporting and to verify a download completed.
+ */
+data class ModelFile(
+    val fileName: String,
+    val url: String,
+    val sizeBytes: Long
+)
+
+/**
+ * ASR-specific filenames for a sherpa-onnx streaming recognizer. The
+ * engine check (TASK-17) uses [encoder]/[decoder]/[joiner]/[tokens] to
+ * build an `OnlineRecognizer`, and the engine check itself uses a
+ * bundled sample wave (`test_wavs/0.wav`) referenced by [ModelBundle.files].
+ */
+data class AsrFiles(
+    val encoder: String,
+    val decoder: String,
+    val joiner: String,
+    val tokens: String,
+    val modelType: String
+)
+
+/**
+ * A downloadable model: an id used as the on-disk directory, a
+ * human-readable display name, its kind and (for ASR) language, the
+ * individual [ModelFile]s to fetch, and the ASR-specific filenames.
+ * `totalBytes` is the sum of every file's size and drives the
+ * downloader's progress UI.
+ */
+data class ModelBundle(
+    val id: String,
+    val displayName: String,
+    val kind: ModelKind,
+    val language: String?,
+    val files: List<ModelFile>,
+    val asr: AsrFiles? = null
+) {
+    val totalBytes: Long get() = files.sumOf { it.sizeBytes }
+}
+
+/**
+ * Static catalog of every model ConvoScribe downloads. Bundles are
+ * listed in [all]; helpers below filter by language or kind. Adding a
+ * new language means adding one more ASR bundle and extending
+ * [asrFor]; adding a new model kind means adding a constant and
+ * listing it in [requiredFor] for any language that needs it.
+ */
+object ModelCatalog {
+
+    private const val ASR_EN_BASE =
+        "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06/resolve/main/"
+
+    private const val ASR_FR_BASE =
+        "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06/resolve/main/"
+
+    private const val SEGMENTATION_URL =
+        "https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.int8.onnx"
+
+    // The misspelling `recongition` is in the upstream GitHub release URL
+    // and must be preserved; sherpa-onnx's docs link to it as-is.
+    @Suppress("ktlint:standard:max-line-length")
+    private const val EMBEDDING_URL =
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/" +
+            "speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx"
+
+    val ASR_EN: ModelBundle = ModelBundle(
+        id = "asr-en-kroko-2025-08-06",
+        displayName = "English speech recognition",
+        kind = ModelKind.ASR,
+        language = "en",
+        files = listOf(
+            ModelFile("encoder.onnx", ASR_EN_BASE + "encoder.onnx", 70_092_599),
+            ModelFile("decoder.onnx", ASR_EN_BASE + "decoder.onnx", 617_488),
+            ModelFile("joiner.onnx", ASR_EN_BASE + "joiner.onnx", 336_817),
+            ModelFile("tokens.txt", ASR_EN_BASE + "tokens.txt", 6_310),
+            ModelFile("test_wavs/0.wav", ASR_EN_BASE + "test_wavs/0.wav", 184_608)
+        ),
+        asr = AsrFiles(
+            encoder = "encoder.onnx",
+            decoder = "decoder.onnx",
+            joiner = "joiner.onnx",
+            tokens = "tokens.txt",
+            modelType = "zipformer2"
+        )
+    )
+
+    val ASR_FR: ModelBundle = ModelBundle(
+        id = "asr-fr-kroko-2025-08-06",
+        displayName = "French speech recognition",
+        kind = ModelKind.ASR,
+        language = "fr",
+        files = listOf(
+            ModelFile("encoder.onnx", ASR_FR_BASE + "encoder.onnx", 70_092_599),
+            ModelFile("decoder.onnx", ASR_FR_BASE + "decoder.onnx", 617_488),
+            ModelFile("joiner.onnx", ASR_FR_BASE + "joiner.onnx", 336_817),
+            ModelFile("tokens.txt", ASR_FR_BASE + "tokens.txt", 5_415)
+        ),
+        asr = AsrFiles(
+            encoder = "encoder.onnx",
+            decoder = "decoder.onnx",
+            joiner = "joiner.onnx",
+            tokens = "tokens.txt",
+            modelType = "zipformer2"
+        )
+    )
+
+    val SEGMENTATION: ModelBundle = ModelBundle(
+        id = "seg-pyannote-3-0-int8",
+        displayName = "Speaker segmentation",
+        kind = ModelKind.SEGMENTATION,
+        language = null,
+        files = listOf(
+            ModelFile("model.int8.onnx", SEGMENTATION_URL, 1_540_506)
+        )
+    )
+
+    val EMBEDDING: ModelBundle = ModelBundle(
+        id = "emb-wespeaker-resnet34-lm",
+        displayName = "Speaker embeddings",
+        kind = ModelKind.EMBEDDING,
+        language = null,
+        files = listOf(
+            ModelFile("wespeaker_en_voxceleb_resnet34_LM.onnx", EMBEDDING_URL, 26_530_550)
+        )
+    )
+
+    val all: List<ModelBundle> = listOf(ASR_EN, ASR_FR, SEGMENTATION, EMBEDDING)
+
+    /**
+     * The ASR bundle for [language] (`"en"` or `"fr"` today). Throws
+     * [IllegalArgumentException] for anything else: ConvoScribe does
+     * not silently fall back to another language, and a typo here is
+     * easier to debug than a wrong-language transcript later.
+     */
+    fun asrFor(language: String): ModelBundle = when (language) {
+        "en" -> ASR_EN
+        "fr" -> ASR_FR
+        else -> throw IllegalArgumentException(
+            "Unsupported ASR language '$language'. Supported: 'en', 'fr'."
+        )
+    }
+
+    /**
+     * The full set of bundles a session in [language] needs: the ASR
+     * for that language, plus the language-agnostic segmentation and
+     * embedding models used by the diarizer.
+     */
+    fun requiredFor(language: String): List<ModelBundle> = listOf(asrFor(language), SEGMENTATION, EMBEDDING)
+}

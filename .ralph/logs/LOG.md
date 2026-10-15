@@ -2,6 +2,26 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-4 — Model catalog and on-disk model store
+Added `models/ModelCatalog.kt` with `ModelKind` enum,
+`ModelFile`/`AsrFiles`/`ModelBundle` data classes and an `object
+ModelCatalog` listing every downloadable bundle (English/French Kroko
+streaming ASR, pyannote segmentation, WeSpeaker embedding) with their
+exact file URLs and byte sizes. Helpers `asrFor(language)` (throws on
+unsupported language) and `requiredFor(language)` (ASR + segmentation +
+embedding) drive the downloader and engine-check flows. Added
+`models/ModelStore.kt` exposing `bundleDir`/`fileFor`/`isInstalled`/
+`missing`/`delete` over `filesDir/models/<bundleId>/`. Wired
+`AppContainer.modelStore = ModelStore(File(context.filesDir, "models"))`
+so the downloader, recognizer and diarizer share one store.
+Unit tests: `ModelCatalogTest` (requiredFor ordering, total bytes per
+language, every URL is HTTPS, `asrFor("de")` throws) and
+`ModelStoreTest` (JUnit `TemporaryFolder`, files created via
+`RandomAccessFile.setLength`, covers missing/wrong-size/installed/
+`missing()`/`delete()`/sub-directory file names).
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest
+lintDebug assembleDebug` exits 0.
+
 ## 2026-10-15 — TASK-3 — sherpa-onnx 1.13.8 native libs (QNN + diarization) and Kotlin API jar
 Compiled `libsherpa-onnx-jni.so` from k2-fsa/sherpa-onnx v1.13.8 with
 `SHERPA_ONNX_ENABLE_QNN=ON` and `SHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=ON`,
