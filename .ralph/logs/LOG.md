@@ -2,6 +2,18 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-17 — Engine check screen (device info, NPU/CPU self-test, real-time factor)
+
+Added `enginecheck/EngineCheckRunner.kt` with `data class EngineCheckResult(engine, initMs, firstRun, audioMs, processMs, text, error)` (realTimeFactor getter) and `class EngineCheckRunner(factory, loadSamples, clock)` that feeds samples in 1600-sample chunks, times `factory.create("en")` and the processing loop, joins the Final texts and always closes the transcriber — exceptions surface as `error` and verdict `FAILED`.
+
+Added `enginecheck/DeviceInfo.kt` with `data class DeviceInfo(...)` and `DeviceInfo.Companion.read(context)` (Build.SOC_* on API 31+, libcdsprpc.so presence, libQnnHtpV*Skel.so enumeration, StatFs availableBytes) plus `fun formatReport(info, results)`, `fun verdict(r)` and `fun storageWarning(freeBytes, npuPrepared)` as pure functions.
+
+Added `ui/enginecheck/EngineCheckViewModel.kt` + `EngineCheckScreen.kt` (route `engine-check`): device-info card, two `Check NPU` / `Check CPU` buttons, per-engine result card with verdict prominent, `Copy report` / `Share report` row. Gated on `recordingController.state.phase != IDLE` ("Stop the recording first"); shows "Download the `<engine>` model first" when the bundle is missing with a button to `setup?engine=<engine>`.
+
+`HomeScreen` gained a top-bar overflow menu (`Icons.Filled.MoreVert`) with item `Engine check` → `engine-check`. `AppNavHost` registers the route and adds `setup?engine={engine}` (optional, defaults to null). `ModelSetupScreen` accepts an `initialEngine: String? = null` so existing callers keep working.
+
+Tests: `enginecheck/EngineCheckRunnerTest.kt` covers the 32 000-sample / 400-ms clock ⇒ audioMs 2000 / RTF 0.20 / verdict OK, the throwing-factory + throwing-accept paths (error set, verdict FAILED, transcriber closed), verdict boundaries 0.49 / 0.5 / 1.0, zero-audio RTF safety and multi-chunk feeding. `enginecheck/ReportTest.kt` covers `formatReport` containing `socModel: QCS6690`, `RTF: 0.20`, `freeStorage: 2.5 GB` for 2 500 000 000 free bytes and `storageWarning` at 1 GB / 1.5 GB / 2 GB. `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0.
+
 ## 2026-10-15 — TASK-16 — QNN (NPU) recognizer backend and engine-aware transcriber factory
 
 Added `engine/sherpa/SherpaAsrConfigs.kt` with `endpoint: EndpointConfig`
