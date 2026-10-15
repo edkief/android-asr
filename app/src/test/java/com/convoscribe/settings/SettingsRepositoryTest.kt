@@ -43,6 +43,7 @@ class SettingsRepositoryTest {
         assertEquals("", s.llmModel)
         assertEquals(24000, s.maxTranscriptChars)
         assertEquals("en", s.asrLanguage)
+        assertEquals("npu", s.asrEngine)
         assertEquals(4, s.numThreads)
         assertEquals(-1, s.numSpeakers)
         assertEquals(0.5f, s.clusterThreshold, 0.0001f)
@@ -58,6 +59,7 @@ class SettingsRepositoryTest {
                 llmModel = "gpt-4o-mini",
                 maxTranscriptChars = 12345,
                 asrLanguage = "fr",
+                asrEngine = "cpu",
                 numThreads = 6,
                 numSpeakers = 3,
                 clusterThreshold = 0.7f,
@@ -71,6 +73,7 @@ class SettingsRepositoryTest {
         assertEquals("gpt-4o-mini", s.llmModel)
         assertEquals(12345, s.maxTranscriptChars)
         assertEquals("fr", s.asrLanguage)
+        assertEquals("cpu", s.asrEngine)
         assertEquals(6, s.numThreads)
         assertEquals(3, s.numSpeakers)
         assertEquals(0.7f, s.clusterThreshold, 0.0001f)
@@ -114,6 +117,38 @@ class SettingsRepositoryTest {
         // Now try to set German — must keep "fr".
         repo.update { it.copy(asrLanguage = "de") }
         assertEquals("fr", repo.settings.value.asrLanguage)
+    }
+
+    @Test
+    fun update_unsupportedAsrEngineKeepsPreviousValue() {
+        val repo = newRepository()
+        // Default is "npu". Try to set an unsupported engine.
+        repo.update { it.copy(asrEngine = "gpu") }
+        assertEquals("npu", repo.settings.value.asrEngine)
+
+        // Switch to "cpu" so we have a known previous value.
+        repo.update { it.copy(asrEngine = "cpu") }
+        assertEquals("cpu", repo.settings.value.asrEngine)
+
+        // Now try to set "gpu" again — must keep "cpu".
+        repo.update { it.copy(asrEngine = "gpu") }
+        assertEquals("cpu", repo.settings.value.asrEngine)
+    }
+
+    @Test
+    fun update_asrEngineRoundTripsSupportedValues() {
+        val repo = newRepository()
+        repo.update { it.copy(asrEngine = "cpu") }
+        assertEquals("cpu", repo.settings.value.asrEngine)
+
+        val fresh = newRepository()
+        assertEquals("cpu", fresh.settings.value.asrEngine)
+
+        repo.update { it.copy(asrEngine = "npu") }
+        assertEquals("npu", repo.settings.value.asrEngine)
+
+        val freshAgain = newRepository()
+        assertEquals("npu", freshAgain.settings.value.asrEngine)
     }
 
     @Test

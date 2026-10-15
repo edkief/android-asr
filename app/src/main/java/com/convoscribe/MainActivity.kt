@@ -13,12 +13,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val container = (applicationContext as ConvoApp).container
-        // The active language is now a setting; if every required bundle is
-        // already on disk we can skip the first-run download screen
-        // and go straight to the home screen.
+        // The active language and ASR engine are settings; if every
+        // required bundle for that combination is already on disk we
+        // can skip the first-run download screen and go straight to
+        // the home screen.
+        val settings = container.settingsRepository.settings.value
         val startDestination = if (
             container.modelStore.missing(
-                ModelCatalog.requiredFor(container.settingsRepository.settings.value.asrLanguage)
+                ModelCatalog.requiredFor(settings.asrLanguage, settings.asrEngine)
             ).isEmpty()
         ) {
             "home"

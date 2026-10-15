@@ -33,6 +33,8 @@ class SettingsRepository(
      *  - `llmBaseUrl` trimmed and trailing `/` removed
      *  - `asrLanguage` must be "en" or "fr"; anything else keeps
      *    the previous value (no exception, no overwrite)
+     *  - `asrEngine` must be "npu" or "cpu"; anything else keeps
+     *    the previous value (no exception, no overwrite)
      */
     fun update(transform: (AppSettings) -> AppSettings) {
         val current = _settings.value
@@ -43,6 +45,7 @@ class SettingsRepository(
             putString(KEY_LLM_MODEL, next.llmModel)
             putInt(KEY_MAX_TRANSCRIPT_CHARS, next.maxTranscriptChars)
             putString(KEY_ASR_LANGUAGE, next.asrLanguage)
+            putString(KEY_ASR_ENGINE, next.asrEngine)
             putInt(KEY_NUM_THREADS, next.numThreads)
             putInt(KEY_NUM_SPEAKERS, next.numSpeakers)
             putFloat(KEY_CLUSTER_THRESHOLD, next.clusterThreshold)
@@ -64,16 +67,20 @@ class SettingsRepository(
             llmModel = prefs.getString(KEY_LLM_MODEL, "") ?: "",
             maxTranscriptChars = prefs.getInt(KEY_MAX_TRANSCRIPT_CHARS, 24000),
             asrLanguage = rawLang,
+            asrEngine = prefs.getString(KEY_ASR_ENGINE, null) ?: "npu",
             numThreads = prefs.getInt(KEY_NUM_THREADS, 4),
             numSpeakers = prefs.getInt(KEY_NUM_SPEAKERS, -1),
             clusterThreshold = prefs.getFloat(KEY_CLUSTER_THRESHOLD, 0.5f),
             speakerMatchThreshold = prefs.getFloat(KEY_SPEAKER_MATCH_THRESHOLD, 0.5f)
         )
         // On load we don't have a "previous" value; if the persisted
-        // asrLanguage is not en/fr we fall back to "en". Every other
-        // numeric field is normalised in-place via [normaliseNumeric].
+        // asrLanguage is not en/fr we fall back to "en"; if the
+        // persisted asrEngine is not "npu" or "cpu" we fall back to
+        // "npu" (the documented default). Every other numeric field is
+        // normalised in-place via [normaliseNumeric].
         val lang = if (raw.asrLanguage == "en" || raw.asrLanguage == "fr") raw.asrLanguage else "en"
-        return raw.copy(asrLanguage = lang).normaliseNumeric().copy(
+        val engine = if (raw.asrEngine == "npu" || raw.asrEngine == "cpu") raw.asrEngine else "npu"
+        return raw.copy(asrLanguage = lang, asrEngine = engine).normaliseNumeric().copy(
             llmBaseUrl = raw.llmBaseUrl.trim().trimEnd('/')
         )
     }
@@ -83,6 +90,7 @@ class SettingsRepository(
         const val KEY_LLM_MODEL = "llmModel"
         const val KEY_MAX_TRANSCRIPT_CHARS = "maxTranscriptChars"
         const val KEY_ASR_LANGUAGE = "asrLanguage"
+        const val KEY_ASR_ENGINE = "asrEngine"
         const val KEY_NUM_THREADS = "numThreads"
         const val KEY_NUM_SPEAKERS = "numSpeakers"
         const val KEY_CLUSTER_THRESHOLD = "clusterThreshold"
@@ -94,13 +102,16 @@ class SettingsRepository(
  * Validate [this] against the previous [previous] settings. Numeric
  * fields are clamped; `llmBaseUrl` is trimmed and stripped of its
  * trailing `/`; `asrLanguage` keeps the previous value when it is
- * not "en" or "fr".
+ * not "en" or "fr"; `asrEngine` keeps the previous value when it is
+ * not "npu" or "cpu".
  */
 private fun AppSettings.validatedAgainst(previous: AppSettings): AppSettings {
     val lang = if (asrLanguage == "en" || asrLanguage == "fr") asrLanguage else previous.asrLanguage
+    val engine = if (asrEngine == "npu" || asrEngine == "cpu") asrEngine else previous.asrEngine
     return this.normaliseNumeric().copy(
         llmBaseUrl = llmBaseUrl.trim().trimEnd('/'),
-        asrLanguage = lang
+        asrLanguage = lang,
+        asrEngine = engine
     )
 }
 

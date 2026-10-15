@@ -2,6 +2,82 @@
 
 <!-- The agent adds an entry after each task: date, task id, brief summary. Newest first. -->
 
+## 2026-10-15 — TASK-15 — NPU model bundle (Nemotron EN, QNN) and user-selectable speech engine setting
+
+Added `ASR_EN_NPU` to `models/ModelCatalog.kt`:
+`id = "asr-en-nemotron-0.6b-560ms-qnn"`, displayName `"English speech
+recognition (NPU)"`, kind ASR, language `"en"`, files
+(`libencoder.so` 591_964_328, `libdecoder.so` 14_888_744,
+`libjoiner.so` 2_107_784, `tokens.txt` 8_952,
+`test_wavs/0.wav` 212_044 — note: every file's URL is `""` because the
+archive path provides the bytes), `asr = AsrFiles("libencoder.so",
+"libdecoder.so", "libjoiner.so", "tokens.txt", modelType =
+"nemo_transducer")`, and `archive = ModelArchive(url =
+"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models-qnn-2/sherpa-onnx-qnn-nemotron-speech-streaming-en-0.6b-560s-android-aarch64.tar.bz2",
+sizeBytes = 421_938_876, rootDir =
+"sherpa-onnx-qnn-nemotron-speech-streaming-en-0.6b-560s-android-aarch64")`.
+Added to `all` (now `ASR_EN, ASR_EN_NPU, ASR_FR, SEGMENTATION,
+EMBEDDING`). Because `downloadBytes` already returns
+`archive.sizeBytes` (TASK-14) `downloadBytes == 421_938_876`;
+`totalBytes` sums the file sizes = `609_181_852`.
+
+`ModelCatalog.effectiveEngine(language, engine) = "npu" iff language ==
+"en" && engine == "npu" else "cpu"` (any other combination — French +
+npu, unknown engine, unknown language — falls back to CPU).
+`asrFor(language, engine)` returns `ASR_EN_NPU` when the effective
+engine is `npu`, otherwise the CPU zipformer for the language (still
+throws `IllegalArgumentException` for unsupported languages).
+`requiredFor(language, engine) = listOf(asrFor(...), SEGMENTATION,
+EMBEDDING)`.
+
+`AppSettings` gained `val asrEngine: String = "npu"`.
+`SettingsRepository.load()` reads it with default `"npu"` and falls back
+to `"npu"` if the persisted value is not `"npu"` or `"cpu"`.
+`SettingsRepository.update` validates `asrEngine` exactly like
+`asrLanguage`: anything that isn't `"npu"` or `"cpu"` keeps the
+previous value (no exception, no overwrite). `KEY_ASR_ENGINE =
+"asrEngine"` is persisted alongside the other keys.
+
+Updated every caller to pass `settings.asrEngine`:
+`MainActivity` start destination, `HomeScreen` FAB click handler, and
+`ModelSetupScreen` ViewModel factory now call
+`ModelCatalog.requiredFor(settings.asrLanguage, settings.asrEngine)`.
+`SherpaTranscriberFactory.create(language)` reads
+`settings.settings.value.asrEngine`, calls
+`ModelCatalog.asrFor(language, engine)`, and when
+`effectiveEngine(language, engine) == "npu"` throws
+`IllegalStateException("NPU engine not available yet")` so a missing
+QNN implementation (TASK-16/17) cannot silently fall back to the CPU
+zipformer.
+
+Tests:
+* `ModelCatalogTest` — added `requiredForEnglishAndCpu_…`,
+  `requiredForEnglishAndNpu_listsNpuAsrSegAndEmbedding`,
+  `requiredForFrenchAndNpu_startsWithFrenchCpuAsr`,
+  `asrEnNpu_downloadBytesAndTotalBytes` (covers both acceptance
+  criteria), `asrForEnglishAndNpu_returnsNpuBundle`,
+  `effectiveEngine_returnsNpuOnlyForEnglishAndNpu`,
+  `asrEnNpuFiles_referenceSharedLibraries`,
+  `asrEnNpuHasArchiveRootDirMatchingReleaseName`. Updated
+  `everyUrlIsHttps` to skip files with empty URLs (the NPU bundle's
+  archive entries), `asrForUnknownLanguage_throws` to pass `"cpu"`,
+  `all_isConsistent` to assert the NPU bundle is in `all`.
+* `SettingsRepositoryTest` — `defaults_areReturnedOnEmptyPrefs`
+  asserts `s.asrEngine == "npu"`; `update_valuesArePersisted…` adds
+  `asrEngine = "cpu"` to the round-trip;
+  `update_unsupportedAsrEngineKeepsPreviousValue` tries `"gpu"`
+  against both the default and a previous `"cpu"` and asserts the
+  previous value survives; `update_asrEngineRoundTripsSupportedValues`
+  round-trips `"cpu"` and `"npu"` through fresh repository instances.
+* `ModelSetupViewModelTest` — no direct signature changes were
+  required (the test passes its own custom `ModelBundle` and does not
+  call `requiredFor`/`asrFor`), but it re-ran green as part of the
+  verify command.
+
+Verify command
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest
+lintDebug assembleDebug` exits 0; all 114 unit tests pass.
+
 ## 2026-10-15 — TASK-14 — Archive (tar.bz2) model downloads with streaming extraction
 
 Added Apache Commons Compress 1.27.1 to `gradle/libs.versions.toml`

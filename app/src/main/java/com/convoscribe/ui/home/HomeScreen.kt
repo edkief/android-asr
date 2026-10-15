@@ -42,9 +42,9 @@ fun HomeScreen(navController: NavHostController) {
     // cheap to access — it is held on the application instance.
     val container = (context.applicationContext as ConvoApp).container
     val onNewRecording: () -> Unit = {
-        val language = container.settingsRepository.settings.value.asrLanguage
+        val settings = container.settingsRepository.settings.value
         val missing = container.modelStore.missing(
-            ModelCatalog.requiredFor(language)
+            ModelCatalog.requiredFor(settings.asrLanguage, settings.asrEngine)
         )
         val target = if (missing.isEmpty()) "record" else "setup"
         navController.navigate(target)

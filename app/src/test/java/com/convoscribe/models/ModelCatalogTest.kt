@@ -1,6 +1,7 @@
 package com.convoscribe.models
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -8,8 +9,8 @@ import org.junit.Test
 class ModelCatalogTest {
 
     @Test
-    fun requiredForEnglish_listsAsrSegAndEmbedding() {
-        val ids = ModelCatalog.requiredFor("en").map { it.id }
+    fun requiredForEnglishAndCpu_listsAsrSegAndEmbedding() {
+        val ids = ModelCatalog.requiredFor("en", "cpu").map { it.id }
         assertEquals(
             listOf(
                 "asr-en-kroko-2025-08-06",
@@ -21,13 +22,34 @@ class ModelCatalogTest {
     }
 
     @Test
+    fun requiredForEnglishAndNpu_listsNpuAsrSegAndEmbedding() {
+        val ids = ModelCatalog.requiredFor("en", "npu").map { it.id }
+        assertEquals(
+            listOf(
+                "asr-en-nemotron-0.6b-560ms-qnn",
+                "seg-pyannote-3-0-int8",
+                "emb-wespeaker-resnet34-lm"
+            ),
+            ids
+        )
+    }
+
+    @Test
     fun requiredForFrench_usesFrenchAsr() {
-        val bundles = ModelCatalog.requiredFor("fr")
+        val bundles = ModelCatalog.requiredFor("fr", "cpu")
         assertEquals("asr-fr-kroko-2025-08-06", bundles[0].id)
         assertEquals("fr", bundles[0].language)
         // Same diarizer models as English.
         assertEquals("seg-pyannote-3-0-int8", bundles[1].id)
         assertEquals("emb-wespeaker-resnet34-lm", bundles[2].id)
+    }
+
+    @Test
+    fun requiredForFrenchAndNpu_startsWithFrenchCpuAsr() {
+        // French is only supported on the CPU engine; the first
+        // bundle must be the French Kroko bundle, not the English NPU.
+        val first = ModelCatalog.requiredFor("fr", "npu").first()
+        assertEquals("asr-fr-kroko-2025-08-06", first.id)
     }
 
     @Test
@@ -41,20 +63,46 @@ class ModelCatalogTest {
     }
 
     @Test
+    fun asrEnNpu_downloadBytesAndTotalBytes() {
+        assertEquals(421_938_876L, ModelCatalog.ASR_EN_NPU.downloadBytes)
+        assertEquals(609_181_852L, ModelCatalog.ASR_EN_NPU.totalBytes)
+    }
+
+    @Test
     fun everyUrlIsHttps() {
         ModelCatalog.all.flatMap { it.files }.forEach { file ->
-            assertTrue(
-                "URL ${file.url} should start with https://",
-                file.url.startsWith("https://")
-            )
+            // The NPU bundle's files are extracted from an archive
+            // and have no URL of their own; skip those.
+            if (file.url.isNotEmpty()) {
+                assertTrue(
+                    "URL ${file.url} should start with https://",
+                    file.url.startsWith("https://")
+                )
+            }
         }
     }
 
     @Test
     fun asrForUnknownLanguage_throws() {
         assertThrows(IllegalArgumentException::class.java) {
-            ModelCatalog.asrFor("de")
+            ModelCatalog.asrFor("de", "cpu")
         }
+    }
+
+    @Test
+    fun asrForEnglishAndNpu_returnsNpuBundle() {
+        val bundle = ModelCatalog.asrFor("en", "npu")
+        assertEquals("asr-en-nemotron-0.6b-560ms-qnn", bundle.id)
+    }
+
+    @Test
+    fun effectiveEngine_returnsNpuOnlyForEnglishAndNpu() {
+        assertEquals("npu", ModelCatalog.effectiveEngine("en", "npu"))
+        assertEquals("cpu", ModelCatalog.effectiveEngine("en", "cpu"))
+        assertEquals("cpu", ModelCatalog.effectiveEngine("fr", "npu"))
+        assertEquals("cpu", ModelCatalog.effectiveEngine("fr", "cpu"))
+        // Unknown engine also falls back to CPU.
+        assertEquals("cpu", ModelCatalog.effectiveEngine("en", "gpu"))
     }
 
     @Test
@@ -69,9 +117,34 @@ class ModelCatalogTest {
     }
 
     @Test
+    fun asrEnNpuFiles_referenceSharedLibraries() {
+        val asr = ModelCatalog.ASR_EN_NPU.asr
+        requireNotNull(asr)
+        assertEquals("libencoder.so", asr.encoder)
+        assertEquals("libdecoder.so", asr.decoder)
+        assertEquals("libjoiner.so", asr.joiner)
+        assertEquals("tokens.txt", asr.tokens)
+        assertEquals("nemo_transducer", asr.modelType)
+    }
+
+    @Test
     fun nonAsrBundles_haveNoAsrFiles() {
         assertEquals(null, ModelCatalog.SEGMENTATION.asr)
         assertEquals(null, ModelCatalog.EMBEDDING.asr)
+    }
+
+    @Test
+    fun asrEnNpuHasArchiveRootDirMatchingReleaseName() {
+        val archive = ModelCatalog.ASR_EN_NPU.archive
+        assertNotNull(archive)
+        assertEquals(
+            "sherpa-onnx-qnn-nemotron-speech-streaming-en-0.6b-560s-android-aarch64",
+            archive!!.rootDir
+        )
+        assertTrue(
+            "NPU archive URL should be on github.com",
+            archive.url.startsWith("https://github.com/k2-fsa/sherpa-onnx/")
+        )
     }
 
     @Test
@@ -85,6 +158,11 @@ class ModelCatalogTest {
                 ModelKind.EMBEDDING
             ),
             kinds
+        )
+        // And the NPU bundle is part of the catalog.
+        assertTrue(
+            "ASR_EN_NPU must appear in all",
+            ModelCatalog.all.any { it.id == ModelCatalog.ASR_EN_NPU.id }
         )
     }
 }

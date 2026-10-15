@@ -53,10 +53,11 @@ fun ModelSetupScreen(onFinished: () -> Unit) {
     val vm: ModelSetupViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
+                val settings = container.settingsRepository.settings.value
                 ModelSetupViewModel(
                     downloader = container.modelDownloader,
                     store = container.modelStore,
-                    bundles = ModelCatalog.requiredFor("en")
+                    bundles = ModelCatalog.requiredFor(settings.asrLanguage, settings.asrEngine)
                 )
             }
         }

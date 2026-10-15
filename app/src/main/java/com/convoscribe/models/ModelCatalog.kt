@@ -161,26 +161,87 @@ object ModelCatalog {
         )
     )
 
-    val all: List<ModelBundle> = listOf(ASR_EN, ASR_FR, SEGMENTATION, EMBEDDING)
+    /**
+     * English Nemotron Speech Streaming EN 0.6B model that runs on
+     * the Hexagon NPU via sherpa-onnx's QNN backend. The upstream
+     * ships it as a single `.tar.bz2` archive containing
+     * `libencoder.so`, `libdecoder.so`, `libjoiner.so`, `tokens.txt`
+     * and a sample wave; the QNN context binaries
+     * (`encoder.bin`/`decoder.bin`/`joiner.bin`) are produced on the
+     * first NPU start and cached next to the shared libraries. Only
+     * the files listed in [files] are extracted from the archive —
+     * everything else inside is discarded.
+     */
+    val ASR_EN_NPU: ModelBundle = ModelBundle(
+        id = "asr-en-nemotron-0.6b-560ms-qnn",
+        displayName = "English speech recognition (NPU)",
+        kind = ModelKind.ASR,
+        language = "en",
+        files = listOf(
+            ModelFile("libencoder.so", "", 591_964_328),
+            ModelFile("libdecoder.so", "", 14_888_744),
+            ModelFile("libjoiner.so", "", 2_107_784),
+            ModelFile("tokens.txt", "", 8_952),
+            ModelFile("test_wavs/0.wav", "", 212_044)
+        ),
+        asr = AsrFiles(
+            encoder = "libencoder.so",
+            decoder = "libdecoder.so",
+            joiner = "libjoiner.so",
+            tokens = "tokens.txt",
+            modelType = "nemo_transducer"
+        ),
+        archive = ModelArchive(
+            url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/" +
+                "asr-models-qnn-2/" +
+                "sherpa-onnx-qnn-nemotron-speech-streaming-en-0.6b-560s-android-aarch64.tar.bz2",
+            sizeBytes = 421_938_876,
+            rootDir = "sherpa-onnx-qnn-nemotron-speech-streaming-en-0.6b-560s-android-aarch64"
+        )
+    )
+
+    val all: List<ModelBundle> = listOf(ASR_EN, ASR_EN_NPU, ASR_FR, SEGMENTATION, EMBEDDING)
 
     /**
-     * The ASR bundle for [language] (`"en"` or `"fr"` today). Throws
-     * [IllegalArgumentException] for anything else: ConvoScribe does
-     * not silently fall back to another language, and a typo here is
-     * easier to debug than a wrong-language transcript later.
+     * Resolve the user-facing engine selection (currently `"npu"` or
+     * `"cpu"`) into the value the catalog uses to pick a bundle:
+     * `npu` is only valid for English; any other combination (FR +
+     * npu, unknown engine, unknown language) falls back to the CPU
+     * bundle for the requested language. Exposed so callers that do
+     * not have access to the catalog otherwise (the
+     * sherpa-onnx-specific factory, the engine-check screen, …) can
+     * make the same decision.
      */
-    fun asrFor(language: String): ModelBundle = when (language) {
-        "en" -> ASR_EN
-        "fr" -> ASR_FR
-        else -> throw IllegalArgumentException(
-            "Unsupported ASR language '$language'. Supported: 'en', 'fr'."
-        )
+    fun effectiveEngine(language: String, engine: String): String =
+        if (language == "en" && engine == "npu") "npu" else "cpu"
+
+    /**
+     * The ASR bundle for [language] (`"en"` or `"fr"` today) and the
+     * chosen [engine] (`"npu"` or `"cpu"`). When the effective engine
+     * is `npu` (English only) this returns [ASR_EN_NPU]; otherwise the
+     * CPU zipformer for the language. Throws
+     * [IllegalArgumentException] for unsupported languages: ConvoScribe
+     * does not silently fall back to another language, and a typo
+     * here is easier to debug than a wrong-language transcript later.
+     */
+    fun asrFor(language: String, engine: String): ModelBundle {
+        val effective = effectiveEngine(language, engine)
+        if (effective == "npu") return ASR_EN_NPU
+        return when (language) {
+            "en" -> ASR_EN
+            "fr" -> ASR_FR
+            else -> throw IllegalArgumentException(
+                "Unsupported ASR language '$language'. Supported: 'en', 'fr'."
+            )
+        }
     }
 
     /**
-     * The full set of bundles a session in [language] needs: the ASR
-     * for that language, plus the language-agnostic segmentation and
-     * embedding models used by the diarizer.
+     * The full set of bundles a session in [language] with the chosen
+     * [engine] needs: the ASR for that combination, plus the
+     * language-agnostic segmentation and embedding models used by the
+     * diarizer.
      */
-    fun requiredFor(language: String): List<ModelBundle> = listOf(asrFor(language), SEGMENTATION, EMBEDDING)
+    fun requiredFor(language: String, engine: String): List<ModelBundle> =
+        listOf(asrFor(language, engine), SEGMENTATION, EMBEDDING)
 }
