@@ -1,0 +1,20 @@
+{
+  "id": "TASK-35",
+  "title": "package the debug APK into a versioned dist artifact",
+  "category": "setup",
+  "description": "Wrap the existing assembleDebug verify command in a small `scripts/build-apk.sh` that copies the resulting APK to a versioned, gitignored path (`dist/convoscribe-<versionName>-debug.apk`) and prints its size and sha256, so the owner has a stable sideload target. PRD acceptance criterion: the debug APK installs on the device.",
+  "steps": [
+    "Create `scripts/build-apk.sh` (executable, `#!/usr/bin/env bash`, `set -euo pipefail`): source `scripts/env.sh`; run `./gradlew --stop`; run `./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; read `versionName` from `app/build/outputs/apk/debug/output-metadata.json` (extract via `grep -oP '\"versionName\"\\s*:\\s*\"\\K[^\"]+'` — do not add a jq dependency); create `dist/` if missing; copy `app/build/outputs/apk/debug/app-debug.apk` to `dist/convoscribe-<versionName>-debug.apk` (overwriting); print `APK: <path>`, `Size: <bytes> (<human>, e.g. 97M)`, `sha256: <hash>` (compute with `sha256sum`), and the matching `adb install -r <path>` command; exit non-zero if the APK is missing or if the verify command fails. Use `numfmt --to=iec` if available, else fall back to awk to print bytes in human units. Do not actually run `adb install` — the loop is unattended and may not have a device attached.",
+    "Append `dist/` to `.gitignore` (a single new line at the end).",
+    "In `README.md` (Install section) add one sentence above the existing `adb install -r` block: `Run `bash scripts/build-apk.sh` to build and copy the APK to `dist/convoscribe-<versionName>-debug.apk` (the wrapper prints the exact path).`",
+    "In `docs/MANUAL_TEST.md` (Install section, right after the `source scripts/env.sh && ./gradlew installDebug` block) add the same one-line pointer to `scripts/build-apk.sh` and note that `installDebug` and `build-apk.sh` produce the same APK; `build-apk` also runs the full verify command (ktlint + tests + lint + assemble) and writes the versioned copy."
+  ],
+  "acceptanceCriteria": [
+    "`bash scripts/build-apk.sh` exits 0 on a clean checkout after TASK-1 setup",
+    "`dist/convoscribe-0.1.0-debug.apk` exists after running the wrapper, is byte-identical to `app/build/outputs/apk/debug/app-debug.apk`, and has a printed sha256",
+    "`dist/` is listed in `.gitignore`",
+    "`README.md` and `docs/MANUAL_TEST.md` both mention `scripts/build-apk.sh` and the `dist/convoscribe-<versionName>-debug.apk` path",
+    "`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug` exits 0 (regression check)"
+  ],
+  "notes": "| Always: run `source scripts/env.sh` before Gradle; the verify command is `source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`; run `./gradlew --stop` before ending. The wrapper itself ends with `./gradlew --stop` and a successful `adb install`, then exits. The sherpa-onnx native libs in `app/src/main/jniLibs/arm64-v8a/` and `app/libs/*.jar` are already produced by TASK-1 / TASK-3 — do not rebuild them here; if they are missing, `assembleDebug` fails fast with the existing `check(...)` block in `app/build.gradle.kts`. No new dependencies (the script uses only bash, grep, awk, sed, sha256sum, numfmt-or-fallback)."
+}

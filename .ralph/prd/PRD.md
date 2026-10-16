@@ -113,8 +113,10 @@ sherpa-onnx Apache-2.0; QNN runtime libraries — Qualcomm (redistributed by she
 ## Acceptance criteria (project)
 
 - The verify command passes on a clean checkout after `bash scripts/setup-toolchain.sh`.
-- `app/build/outputs/apk/debug/app-debug.apk` installs on the device. First launch downloads the
-  models for the selected engine with a progress bar (NPU ≈ 450 MB, CPU ≈ 99 MB).
+- `app/build/outputs/apk/debug/app-debug.apk` installs on the device; `bash scripts/build-apk.sh`
+  produces a byte-identical versioned copy at `dist/convoscribe-<versionName>-debug.apk` (TASK-35)
+  with its sha256 printed. First launch downloads the models for the selected engine with a progress
+  bar (NPU ≈ 450 MB, CPU ≈ 99 MB).
 - On the device, the Engine check reports the NPU engine working with a real-time factor < 0.5;
   the first NPU start shows a "preparing" message and later starts are fast.
 - Recording shows live English text with either engine (switchable in Settings); after Stop, lines get "Speaker N" labels within a few minutes

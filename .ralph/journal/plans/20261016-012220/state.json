@@ -1,0 +1,159 @@
+{
+  "id": "20261016-012220",
+  "mode": "replan",
+  "by": "daemon",
+  "status": "planned",
+  "prompt": null,
+  "seq": 1,
+  "activity": null,
+  "turn": 2,
+  "maxTurns": 30,
+  "model": "minimax/MiniMax-M3",
+  "startedAt": "2026-10-16T01:22:20.154Z",
+  "updatedAt": "2026-10-16T01:43:34.069Z",
+  "outcome": {
+    "outsideChanges": [],
+    "tasks": [
+      {
+        "id": "TASK-1",
+        "title": "Add idempotent toolchain setup scripts (JDK 17, Android SDK, Gradle)"
+      },
+      {
+        "id": "TASK-2",
+        "title": "Create the Gradle/Compose project skeleton with ktlint, lint and unit tests"
+      },
+      {
+        "id": "TASK-3",
+        "title": "Build sherpa-onnx 1.13.8 native libraries with Qualcomm NPU (QNN) and diarization, and package them"
+      },
+      {
+        "id": "TASK-4",
+        "title": "Model catalog and on-disk model store"
+      },
+      {
+        "id": "TASK-5",
+        "title": "Model downloader with progress, size verification and atomic rename"
+      },
+      {
+        "id": "TASK-6",
+        "title": "First-run model setup screen and start-destination routing"
+      },
+      {
+        "id": "TASK-7",
+        "title": "Settings repository (prefs + encrypted API key)"
+      },
+      {
+        "id": "TASK-8",
+        "title": "Room database: sessions, segments, speakers, chat messages"
+      },
+      {
+        "id": "TASK-9",
+        "title": "Audio capture, PCM conversion, WAV writer and reader"
+      },
+      {
+        "id": "TASK-10",
+        "title": "Streaming transcriber: endpoint segmenter, text normalizer and sherpa backend"
+      },
+      {
+        "id": "TASK-11",
+        "title": "RecordingController: wire audio, WAV, transcriber and database"
+      },
+      {
+        "id": "TASK-12",
+        "title": "Foreground RecordingService (microphone type) with notification"
+      },
+      {
+        "id": "TASK-13",
+        "title": "Recording screen with permission flow and live transcript"
+      },
+      {
+        "id": "TASK-14",
+        "title": "Archive (tar.bz2) model downloads with streaming extraction"
+      },
+      {
+        "id": "TASK-15",
+        "title": "NPU model bundle (Nemotron EN, QNN) and user-selectable speech engine setting"
+      },
+      {
+        "id": "TASK-16",
+        "title": "QNN (NPU) recognizer backend and engine-aware transcriber factory"
+      },
+      {
+        "id": "TASK-17",
+        "title": "Engine check screen (device info, NPU/CPU self-test, real-time factor)"
+      },
+      {
+        "id": "TASK-18",
+        "title": "Diarization engine and speaker-to-segment assignment"
+      },
+      {
+        "id": "TASK-19",
+        "title": "Diarize sessions after recording (use case + service action + crash recovery)"
+      },
+      {
+        "id": "TASK-20",
+        "title": "Home screen: session list with status and delete"
+      },
+      {
+        "id": "TASK-21",
+        "title": "Session detail screen: transcript tab, formatter and share"
+      },
+      {
+        "id": "TASK-22",
+        "title": "Rename speakers and session title; re-run speaker detection"
+      },
+      {
+        "id": "TASK-23",
+        "title": "OpenAI-compatible chat client with SSE streaming"
+      },
+      {
+        "id": "TASK-24",
+        "title": "Settings screen (LLM endpoint, transcription, speakers) with connection test"
+      },
+      {
+        "id": "TASK-25",
+        "title": "Prompt builder and transcript truncation"
+      },
+      {
+        "id": "TASK-26",
+        "title": "Summary tab: stream, save and regenerate the summary"
+      },
+      {
+        "id": "TASK-27",
+        "title": "Ask tab: question/answer chat about the transcript"
+      },
+      {
+        "id": "TASK-28",
+        "title": "French transcription: language setting, model download and per-session language"
+      },
+      {
+        "id": "TASK-29",
+        "title": "Manual on-device test guide and README completion"
+      },
+      {
+        "id": "TASK-30",
+        "title": "v2: enrolled speakers table (DB v2 auto-migration) and embedding math"
+      },
+      {
+        "id": "TASK-31",
+        "title": "v2: speaker embedder (sherpa) and enroll-from-audio use case"
+      },
+      {
+        "id": "TASK-32",
+        "title": "v2: known speakers screen (enroll, list, delete)"
+      },
+      {
+        "id": "TASK-33",
+        "title": "v2: name enrolled speakers automatically after diarization"
+      },
+      {
+        "id": "TASK-34",
+        "title": "v2: save a session speaker as a known speaker"
+      },
+      {
+        "id": "TASK-35",
+        "title": "package the debug APK into a versioned dist artifact"
+      }
+    ]
+  }
+}
