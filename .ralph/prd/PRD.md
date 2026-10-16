@@ -56,6 +56,16 @@ or for questions about the conversation.
   `<uses-native-library android:name="libcdsprpc.so" android:required="false"/>` in `<application>`;
   `OnlineRecognizer.prependAdspLibraryPath(applicationInfo.nativeLibraryDir)` before creating an NPU
   recognizer (only in `engine/sherpa/QnnRuntime.kt`).
+- **`TranscriberFactory.create(language)` may take an optional `engine: String?`** (default
+  `null` reads from `SettingsRepository.settings.value.asrEngine`). The engine-check runner
+  passes the requested engine explicitly so it always tests the engine the user tapped, not
+  whatever is currently selected in Settings. The recording controller keeps using the
+  no-engine-parameter overload (still reads from settings) so a settings change while recording
+  picks up the right value, as today.
+- **Foreground recording may request `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`** (one-time
+  prompt in the recording screen, ignored if the user declines). The denial path falls back to
+  the existing partial-wake-lock + foreground-microphone service behaviour and continues to work
+  on every device we tested on.
 - Exact versions are pinned in `gradle/libs.versions.toml` (created by TASK-2). Do not upgrade
   them, and do not add libraries a task does not name.
 - **Dependency injection is manual**: `com.convoscribe.AppContainer`, created in
@@ -116,11 +126,20 @@ sherpa-onnx Apache-2.0; QNN runtime libraries — Qualcomm (redistributed by she
 - `app/build/outputs/apk/debug/app-debug.apk` installs on the device; `bash scripts/build-apk.sh`
   produces a byte-identical versioned copy at `dist/convoscribe-<versionName>-debug.apk` (TASK-35)
   with its sha256 printed. First launch downloads the models for the selected engine with a progress
-  bar (NPU ≈ 450 MB, CPU ≈ 99 MB).
-- On the device, the Engine check reports the NPU engine working with a real-time factor < 0.5;
-  the first NPU start shows a "preparing" message and later starts are fast.
+  bar (NPU ≈ 450 MB, CPU ≈ 99 MB). The setup screen shows progress > 0 within the first second
+  even on a slow link (no "stuck at 0 / N MB" window).
+- On the device, the Engine check reports **both engines** (NPU and CPU) working with a real-time
+  factor < 1.0 regardless of which engine the user currently has selected in Settings; the first
+  NPU start shows a "preparing" message and later starts are fast. The CPU button never crashes
+  the app.
 - Recording shows live English text with either engine (switchable in Settings); after Stop, lines get "Speaker N" labels within a few minutes
   for a 10-minute recording; speakers can be renamed; the session appears in the list after restart.
+- A recording started with the screen on continues capturing audio with the screen off (the
+  foreground notification remains visible, no chunks are dropped); stopping via the notification's
+  Stop action lands on `TRANSCRIBED` and triggers diarization. The Onyx Boox e-ink BSP is the
+  hardest target — doze / aggressive battery savers must not abort the recording.
+- Diarization failures (corrupted WAV, native OOM, hang > 30 min, anything else) never crash the
+  app: the session is moved to `DIARIZATION_FAILED` and the user can retry from the session list.
 - With an endpoint configured, "Summarise" streams a summary and "Ask" answers questions; both
   are saved with the session.
 - French can be selected in Settings and transcribes French speech (CPU engine).
@@ -144,6 +163,16 @@ sherpa-onnx Apache-2.0; QNN runtime libraries — Qualcomm (redistributed by she
 - Diarization loads the whole recording in memory (`android:largeHeap="true"`); recordings up to
   ~60 minutes are supported.
 - Model output casing varies; the app sentence-cases all-upper-case output.
-- Speaker embedding model `wespeaker_en_voxceleb_resnet34_LM` (VoxCeleb, multilingual speakers)
+- Speaker embedding model `wespeaker_en_voxceleb_resnet34_lm` (VoxCeleb, multilingual speakers)
   is used for both diarization and v2 enrollment.
 - Model files are verified by exact byte size, not checksum.
+- Background recording relies on the standard Android foreground microphone service plus a
+  partial wake lock refreshed periodically; we ask the user to grant the
+  `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` exemption (via a one-time prompt in the recording
+  screen) so doze on the Onyx Boox e-ink BSP does not abort the session. The user can deny the
+  prompt; the app keeps working as it does today in that case.
+- Diarization "crash" symptoms today are either a native SIGSEGV (out of Kotlin's reach) or a
+  hang/timeout that the user perceives as a crash. The fix layers three defences: a 30-minute
+  per-session timeout, a defensive try-catch on `Throwable` that flips the status to
+  `DIARIZATION_FAILED` on any recoverable error, and a watchdog that tears down the foreground
+  notification even if the use case never returns.
