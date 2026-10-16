@@ -1,0 +1,10 @@
+BUILD SUCCESSFUL in 12s
+63 actionable tasks: 1 executed, 62 up-to-date
+APK: /workspace/main/dist/convoscribe-0.1.0-debug.apk
+Size: 101674553 (97M)
+sha256: abd0369bc5a297cf449b924ef02463e8a0a4bf405bc96f82beb0c5a9d64e7b04
+
+Install on a connected device with:
+    adb install -r /workspace/main/dist/convoscribe-0.1.0-debug.apk
+abd0369bc5a297cf449b924ef02463e8a0a4bf405bc96f82beb0c5a9d64e7b04  dist/convoscribe-0.1.0-debug.apk
+abd0369bc5a297cf449b924ef02463e8a0a4bf405bc96f82beb0c5a9d64e7b04  app/build/outputs/apk/debug/app-debug.apk
