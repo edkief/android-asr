@@ -65,6 +65,9 @@
     <string name="settings_speakers_threshold_label">Clustering threshold</string>
     <string name="settings_speakers_threshold_value">%1$.2f</string>
     <string name="settings_speakers_threshold_help">Lower = more speakers</string>
+    <string name="settings_speakers_match_threshold_label">Voice match threshold</string>
+    <string name="settings_speakers_match_threshold_value">%1$.2f</string>
+    <string name="settings_speakers_match_threshold_help">Higher = stricter name matching</string>
     <string name="settings_saved">Saved</string>
     <string name="settings_test_connected">Connected – %1$d models: %2$s</string>
     <string name="enginecheck_title">Engine check</string>

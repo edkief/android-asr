@@ -211,11 +211,15 @@ fun SettingsScreen(navController: NavHostController) {
             SpeakersSection(
                 numSpeakers = state.form.numSpeakers,
                 threshold = state.form.clusterThreshold,
+                matchThreshold = state.form.speakerMatchThreshold,
                 onNumSpeakersChange = { count ->
                     vm.update(state.form.copy(numSpeakers = count))
                 },
                 onThresholdChange = { value ->
                     vm.update(state.form.copy(clusterThreshold = value))
+                },
+                onMatchThresholdChange = { value ->
+                    vm.update(state.form.copy(speakerMatchThreshold = value))
                 },
                 onOpenKnownSpeakers = { navController.navigate("speakers") }
             )
@@ -499,8 +503,10 @@ private fun TranscriptionSection(
 private fun SpeakersSection(
     numSpeakers: Int,
     threshold: Float,
+    matchThreshold: Float,
     onNumSpeakersChange: (Int) -> Unit,
     onThresholdChange: (Float) -> Unit,
+    onMatchThresholdChange: (Float) -> Unit,
     onOpenKnownSpeakers: () -> Unit
 ) {
     SectionHeader(text = stringResource(R.string.settings_section_speakers))
@@ -566,6 +572,26 @@ private fun SpeakersSection(
     )
     Text(
         text = stringResource(R.string.settings_speakers_threshold_help),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = stringResource(R.string.settings_speakers_match_threshold_label),
+        style = MaterialTheme.typography.titleSmall
+    )
+    Slider(
+        value = matchThreshold.coerceIn(0.3f, 0.8f),
+        onValueChange = { onMatchThresholdChange(it.coerceIn(0.3f, 0.8f)) },
+        valueRange = 0.3f..0.8f,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Text(
+        text = stringResource(R.string.settings_speakers_match_threshold_value, matchThreshold),
+        style = MaterialTheme.typography.bodySmall
+    )
+    Text(
+        text = stringResource(R.string.settings_speakers_match_threshold_help),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )

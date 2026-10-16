@@ -261,14 +261,24 @@ class SessionRepository(
      * Persist a diarization result. [assignments] maps a segment id
      * to its speaker index (or `null` for unlabelled). [speakerCount]
      * is the number of distinct speakers the diarizer detected, used
-     * to generate the "Speaker 1..N" labels.
+     * to generate the "Speaker 1..N" labels. [labels] is an optional
+     * map of `speakerIndex → user-visible name`; any index present
+     * here keeps that name instead of falling back to
+     * `"Speaker ${index + 1}"`. Unknown indices are silently
+     * ignored — the diarizer is the authority on the set of
+     * speakers, the label map just renames some of them.
      *
      * Everything happens in one transaction so a crash mid-write
      * does not leave the session half-diarized: either every
      * segment has the new index and the speakers table is replaced,
      * or nothing changed.
      */
-    suspend fun applyDiarization(sessionId: Long, assignments: Map<Long, Int?>, speakerCount: Int) {
+    suspend fun applyDiarization(
+        sessionId: Long,
+        assignments: Map<Long, Int?>,
+        speakerCount: Int,
+        labels: Map<Int, String> = emptyMap()
+    ) {
         db.withTransaction {
             assignments.forEach { (segmentId, speakerIndex) ->
                 segmentDao.setSpeaker(segmentId, speakerIndex)
@@ -278,7 +288,7 @@ class SessionRepository(
                 SpeakerEntity(
                     sessionId = sessionId,
                     speakerIndex = i,
-                    label = "Speaker ${i + 1}"
+                    label = labels[i] ?: "Speaker ${i + 1}"
                 )
             }
             if (rows.isNotEmpty()) {

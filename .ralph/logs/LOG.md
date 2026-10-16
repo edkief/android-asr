@@ -1,3 +1,62 @@
+## 2026-10-16 — TASK-33: v2 name enrolled speakers automatically after diarization
+
+Wired the post-diarization speaker-name pass so a fresh
+recognition can replace `"Speaker 1 / 2 / 3"` with the user's
+enrolled name when the cosine match clears the threshold.
+
+`diarization/SpeakerSampleCollector.kt`: new pure-Kotlin object
+that, per renumbered speaker index, concatenates the audio of
+its diarized turns (16 samples per ms, clamped to the
+recording's bounds), skipping turns shorter than 500 ms and
+capping each speaker at 30 000 ms. Speakers whose concatenated
+audio is shorter than `MIN_COLLECTED_MS = 2_000` ms are
+dropped from the embedding map (too little speech to be
+useful). Returns a `Map<Int, FloatArray>` so the embedder can
+handle each speaker without re-walking the turn list.
+
+`diarization/SpeakerAssigner.kt`: `Assignment` now also
+exposes `rawToIndex: Map<Int, Int>` so the post-diarization
+pass can resolve raw engine ids to renumbered indices when
+slicing per-speaker audio.
+
+`data/SessionRepository.kt`: `applyDiarization` accepts an
+optional `labels: Map<Int, String>`; any index present keeps
+its name instead of the default `"Speaker N"`. Unknown
+indices are ignored.
+
+`diarization/DiarizeSessionUseCase.kt`: takes the new
+`embedderFactory: SpeakerEmbedderFactory` and
+`enrolled: EnrolledSpeakerStore` constructor parameters. After
+the speaker assignment, when the user has at least one
+enrollment, the use case builds the per-speaker windows,
+embeds them through one shared `SpeakerEmbedder` (in `use
+{ }`), matches the embeddings against the enrolled names via
+`SpeakerMatcher.assignNames`, and forwards the resulting
+`speakerIndex → name` map to the repository. Embedding
+failures are caught and logged with `Log.w` so a broken
+speaker model never fails the diarization — the session
+still lands on `DIARIZED` with default labels.
+
+`ui/settings/SettingsScreen.kt`: Speakers section gains a
+"Voice match threshold" slider (0.3..0.8) bound to
+`AppSettings.speakerMatchThreshold`, mirroring the existing
+clustering threshold. Strings added to `strings.xml`.
+
+`AppContainer`: wires the sherpa `speakerEmbedderFactory`
+and `enrolledSpeakers` store into `diarizeSessionUseCase`.
+
+Tests: `SpeakerSampleCollectorTest` (8 spec tests: cap at
+30 s, skip short turns, drop sparse speakers, clamp to
+recording bounds, etc.); three new acceptance tests in
+`DiarizeSessionUseCaseTest` — enrolled "Alice" matches
+speaker 0, no enrolled speakers short-circuits the embedder
+factory, throwing embedder still ends in `DIARIZED` with
+default labels.
+
+Verified with
+`source scripts/env.sh && ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug`
+(exit 0).
+
 ## 2026-10-15 — TASK-31: v2 speaker embedder (sherpa) and enroll-from-audio use case
 
 Added the v2 "enroll this speaker by voice" pipeline so a fresh

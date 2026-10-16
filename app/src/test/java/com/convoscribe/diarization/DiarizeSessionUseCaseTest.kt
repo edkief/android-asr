@@ -4,11 +4,18 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.convoscribe.data.AppDatabase
+import com.convoscribe.data.EnrolledSpeakerEntity
+import com.convoscribe.data.EnrolledSpeakerStore
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.data.SessionStatus
 import com.convoscribe.settings.InMemorySecretStore
 import com.convoscribe.settings.SettingsRepository
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -33,10 +40,20 @@ import org.robolectric.RobolectricTestRunner
  *    `FloatArray(16_000)` so the test does not have to lay out
  *    a WAV header just to feed the engine.
  *
+ * For the speaker-name embedding pass (TASK-33) we inject
+ *  * [FakeEnrolledSpeakerStore] returning the configured list
+ *    of [SpeakerMatcher.Enrolled] names;
+ *  * [FakeSpeakerEmbedderFactory] / [FakeSpeakerEmbedder] that
+ *    return a vector derived from the input (so a unit vector
+ *    `unit(0°)` is cosine-identical to a `"Alice"` whose
+ *    reference is `unit(0°)`, and `unit(60°)` is cosine 0.5
+ *    away — convenient for asserting the threshold behaviour).
+ *
  * Every test passes the same Robolectric-provided context to a
  * freshly built in-memory Room database, so the tests do not
  * share state.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 class DiarizeSessionUseCaseTest {
 
@@ -132,6 +149,92 @@ class DiarizeSessionUseCaseTest {
         override fun close() {
             // Nothing to release.
         }
+    }
+
+    /**
+     * Small 2-D speaker-embedding fake: returns a unit vector at
+     * `angle = degrees` so two embeddings have a predictable
+     * cosine similarity (cos of the angular distance). The
+     * factory records every call so we can assert the use case
+     * did (or didn't) build one.
+     */
+    private class FakeSpeakerEmbedder : SpeakerEmbedder {
+        var embedCalls: Int = 0
+            private set
+        var closed: Boolean = false
+            private set
+        var lastSamplesSize: Int = 0
+            private set
+        override fun embed(samples: FloatArray): FloatArray {
+            embedCalls += 1
+            lastSamplesSize = samples.size
+            return unit(0.0)
+        }
+
+        override fun close() {
+            closed = true
+        }
+    }
+
+    private class FakeSpeakerEmbedderFactory(private val embedder: SpeakerEmbedder) : SpeakerEmbedderFactory {
+        var createCalls: Int = 0
+            private set
+        override fun create(): SpeakerEmbedder {
+            createCalls += 1
+            return embedder
+        }
+    }
+
+    /**
+     * [SpeakerEmbedder] that always throws on [embed]. Used by
+     * the "embedder failure" test to verify the speaker-name
+     * pass fails closed: the session is still `DIARIZED` and
+     * the speakers table falls back to default labels.
+     */
+    private class ThrowingSpeakerEmbedder : SpeakerEmbedder {
+        override fun embed(samples: FloatArray): FloatArray {
+            throw IllegalStateException("embedding model exploded")
+        }
+
+        override fun close() = Unit
+    }
+
+    /**
+     * In-memory [EnrolledSpeakerStore]. Mirrors the [FakeEnrolledSpeakerStore]
+     * used in `EnrollSpeakerUseCaseTest` but kept private to
+     * this file because the two test classes never look at the
+     * same database state.
+     */
+    private class FakeEnrolledSpeakerStore(
+        private val rows: List<SpeakerMatcher.Enrolled>
+    ) : EnrolledSpeakerStore {
+        constructor(vararg pairs: Pair<String, FloatArray>) : this(
+            pairs.map { (name, vec) -> SpeakerMatcher.Enrolled(name, vec) }
+        )
+
+        override fun observeAll(): Flow<List<EnrolledSpeakerEntity>> = flow {
+            emit(
+                rows.map { row ->
+                    EnrolledSpeakerEntity(
+                        id = 0L,
+                        name = row.name,
+                        embedding = row.embedding.toBytes(),
+                        createdAt = 0L
+                    )
+                }
+            )
+        }
+
+        override suspend fun getAll(): List<SpeakerMatcher.Enrolled> = rows.map { row ->
+            SpeakerMatcher.Enrolled(row.name, row.embedding.copyOf())
+        }
+
+        override suspend fun save(name: String, embedding: FloatArray) {
+            error("Fake store is read-only")
+        }
+
+        @Suppress("unused")
+        override suspend fun delete(id: Long) = Unit
     }
 
     /**
@@ -250,4 +353,167 @@ class DiarizeSessionUseCaseTest {
         // No speakers written.
         assertTrue(repo.getSpeakers(id).isEmpty())
     }
+
+    /**
+     * Acceptance test 4: with an enrolled "Alice" whose
+     * reference embedding equals the fake embedder's output for
+     * every speaker window (we use a constant `unit(0°)`), the
+     * post-diarization naming pass labels speaker 0 with
+     * "Alice", and speaker 1 falls back to the default
+     * "Speaker 2" label (no second enrollment to match
+     * against). Confirms the wiring end-to-end and that
+     * [SpeakerAssigner.Assignment.rawToIndex] is actually
+     * consulted by the embedder's `speakerMap`.
+     */
+    @Test
+    fun run_withEnrolledSpeaker_labelsMatchedSpeakerByName() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        repo.addSegment(id, startMs = 0L, endMs = 5_000L, text = "first")
+        repo.addSegment(id, startMs = 5_000L, endMs = 10_000L, text = "second")
+        // Two raw engine speakers, both renumbered 0 and 1 by
+        // SpeakerAssigner. The fake embedder returns
+        // `unit(0°)`, so whichever speaker window we feed it
+        // has cosine 1.0 against "Alice"'s reference.
+        val turns = listOf(
+            SpeakerTurn(startMs = 0L, endMs = 5_000L, speaker = 7),
+            SpeakerTurn(startMs = 5_000L, endMs = 10_000L, speaker = 3)
+        )
+        val diarizer = ScriptedDiarizer(turns)
+        val diarizerFactory = ScriptedDiarizerFactory(diarizer)
+        val embedderFactory = FakeSpeakerEmbedderFactory(FakeSpeakerEmbedder())
+        val enrolledStore = FakeEnrolledSpeakerStore("Alice" to unit(0.0))
+        // Force a very loose threshold so the cosine-1.0 match
+        // clears it without contention from any other enrolled
+        // vector.
+        settings.update { it.copy(speakerMatchThreshold = 0.3f) }
+        // 12 s of audio so the collector's MIN_COLLECTED_MS
+        // (2 000 ms) per speaker is comfortably cleared; both
+        // turns land inside the recording window.
+        val useCase = DiarizeSessionUseCase(
+            repository = repo,
+            diarizerFactory = diarizerFactory,
+            settings = settings,
+            embedderFactory = embedderFactory,
+            enrolled = enrolledStore,
+            readSamples = { FloatArray(12 * 16_000) }
+        )
+
+        useCase.run(id)
+        advanceUntilIdle()
+
+        val session = repo.getSession(id)!!
+        assertEquals(SessionStatus.DIARIZED, session.status)
+        val speakers = repo.getSpeakers(id).sortedBy { it.speakerIndex }
+        assertEquals(2, speakers.size)
+        // First renumbered index (0) was matched to "Alice" — the
+        // SpeakerAssigner assigns raw speaker 7 → index 0 first
+        // because segment 0 starts at 0 ms.
+        assertEquals("Alice", speakers[0].label)
+        assertEquals(0, speakers[0].speakerIndex)
+        // The second renumbered index (1) has no match — default
+        // label applies.
+        assertEquals("Speaker 2", speakers[1].label)
+        assertEquals(1, speakers[1].speakerIndex)
+
+        // The embedder factory was used (the pass runs because
+        // the user has at least one enrollment) and the embedder
+        // was closed via `use { }`.
+        assertEquals(1, embedderFactory.createCalls)
+    }
+
+    /**
+     * Acceptance test 5: a session that finds *zero*
+     * enrolled speakers must short-circuit the embedding pass
+     * entirely. The use case must not call `create()` on the
+     * embedder factory (no native model load) and must land
+     * with default labels.
+     */
+    @Test
+    fun run_withNoEnrolledSpeakers_neverCreatesEmbedder() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        repo.addSegment(id, startMs = 0L, endMs = 5_000L, text = "first")
+        repo.addSegment(id, startMs = 5_000L, endMs = 10_000L, text = "second")
+        val turns = listOf(
+            SpeakerTurn(startMs = 0L, endMs = 5_000L, speaker = 0),
+            SpeakerTurn(startMs = 5_000L, endMs = 10_000L, speaker = 1)
+        )
+        val diarizerFactory = ScriptedDiarizerFactory(ScriptedDiarizer(turns))
+        val embedderFactory = FakeSpeakerEmbedderFactory(FakeSpeakerEmbedder())
+        val useCase = DiarizeSessionUseCase(
+            repository = repo,
+            diarizerFactory = diarizerFactory,
+            settings = settings,
+            embedderFactory = embedderFactory,
+            enrolled = FakeEnrolledSpeakerStore(emptyList()),
+            readSamples = { FloatArray(16_000) }
+        )
+
+        useCase.run(id)
+
+        val session = repo.getSession(id)!!
+        assertEquals(SessionStatus.DIARIZED, session.status)
+        // Embedder factory was never asked to build anything:
+        // the empty-enrolled short-circuit runs first.
+        assertEquals(0, embedderFactory.createCalls)
+        // Default labels are preserved.
+        val speakers = repo.getSpeakers(id).sortedBy { it.speakerIndex }
+        assertEquals(listOf("Speaker 1", "Speaker 2"), speakers.map { it.label })
+    }
+
+    /**
+     * Acceptance test 6: a throw in the embedder does NOT
+     * defeat the diarization. The session still lands in
+     * `DIARIZED`, no exception leaks out, and the speakers
+     * table falls back to default labels. This is the v2
+     * "embedding failures must not fail diarization" guarantee.
+     */
+    @Test
+    fun run_withThrowingEmbedder_stillDiarizesWithDefaultLabels() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        repo.addSegment(id, startMs = 0L, endMs = 5_000L, text = "first")
+        repo.addSegment(id, startMs = 5_000L, endMs = 10_000L, text = "second")
+        val turns = listOf(
+            SpeakerTurn(startMs = 0L, endMs = 5_000L, speaker = 0),
+            SpeakerTurn(startMs = 5_000L, endMs = 10_000L, speaker = 1)
+        )
+        val diarizerFactory = ScriptedDiarizerFactory(ScriptedDiarizer(turns))
+        val embedderFactory = FakeSpeakerEmbedderFactory(ThrowingSpeakerEmbedder())
+        val enrolledStore = FakeEnrolledSpeakerStore("Alice" to unit(0.0))
+        val useCase = DiarizeSessionUseCase(
+            repository = repo,
+            diarizerFactory = diarizerFactory,
+            settings = settings,
+            embedderFactory = embedderFactory,
+            enrolled = enrolledStore,
+            readSamples = { FloatArray(16_000) }
+        )
+
+        useCase.run(id)
+
+        val session = repo.getSession(id)!!
+        assertEquals(SessionStatus.DIARIZED, session.status)
+        val speakers = repo.getSpeakers(id).sortedBy { it.speakerIndex }
+        assertEquals(2, speakers.size)
+        // No name survived — the embedder threw, the fallback
+        // labels take over.
+        assertEquals("Speaker 1", speakers[0].label)
+        assertEquals("Speaker 2", speakers[1].label)
+    }
+}
+
+/** 2-D unit vector at [degrees] from the x-axis. */
+private fun unit(degrees: Double): FloatArray {
+    val rad = Math.toRadians(degrees)
+    return floatArrayOf(Math.cos(rad).toFloat(), Math.sin(rad).toFloat())
+}
+
+/**
+ * Little-endian float32 packing. Mirrors
+ * [com.convoscribe.data.toBytes] so the fake store's observeAll
+ * hands back the same encoding Room would store on disk.
+ */
+private fun FloatArray.toBytes(): ByteArray {
+    val buf = ByteBuffer.allocate(size * 4).order(ByteOrder.LITTLE_ENDIAN)
+    buf.asFloatBuffer().put(this)
+    return buf.array()
 }

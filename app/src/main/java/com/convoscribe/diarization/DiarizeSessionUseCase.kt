@@ -3,6 +3,7 @@ package com.convoscribe.diarization
 import android.util.Log
 import com.convoscribe.TAG
 import com.convoscribe.audio.WavReader
+import com.convoscribe.data.EnrolledSpeakerStore
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.data.SessionStatus
 import com.convoscribe.settings.SettingsRepository
@@ -39,7 +40,11 @@ import kotlinx.coroutines.withContext
  * session status is moved to [SessionStatus.DIARIZATION_FAILED]
  * and the exception is logged with `Log.w` so the recording
  * service can stop foreground cleanly and the user can still see
- * the transcript (they may retry from the session list).
+ * the transcript (they may retry from the session list). Embedding
+ * failures specifically are logged with `Log.w` and the
+ * diarization lands with the default `"Speaker N"` labels: a
+ * crashed speaker model must not prevent the user from seeing the
+ * transcript, only from seeing names.
  *
  * @property repository the [SessionRepository] used to flip status
  *   and persist the per-segment assignment.
@@ -47,7 +52,16 @@ import kotlinx.coroutines.withContext
  *   duration of the call; the engine is closed in a `use { }`
  *   block so the native memory is released even on failure.
  * @property settings the user's settings (the [numSpeakers] and
- *   [clusterThreshold] overrides are forwarded to the engine).
+ *   [clusterThreshold] overrides are forwarded to the engine,
+ *   and [speakerMatchThreshold] gates the cosine matching).
+ * @property embedderFactory builds a fresh [SpeakerEmbedder] for
+ *   the per-speaker embedding pass. Invoked at most once; left
+ *   to a sensible default (a no-op factory) so unit tests that
+ *   don't care about embeddings can ignore the parameter.
+ * @property enrolled speakers the user has enrolled with the
+ *   v2 voice-sample flow. When empty, the embedder factory is
+ *   never called (an empty `FloatArray` slice cannot be
+ *   matched against anything).
  * @property readSamples how to load the WAV into a float array;
  *   defaults to [WavReader.readMono16k]. Injected so tests can
  *   skip the WAV header parsing and feed the engine a
@@ -57,6 +71,10 @@ class DiarizeSessionUseCase(
     private val repository: SessionRepository,
     private val diarizerFactory: DiarizerFactory,
     private val settings: SettingsRepository,
+    private val embedderFactory: SpeakerEmbedderFactory = SpeakerEmbedderFactory {
+        error("Embedder factory not configured")
+    },
+    private val enrolled: EnrolledSpeakerStore = EmptyEnrolledStore,
     private val readSamples: (File) -> FloatArray = WavReader::readMono16k
 ) {
 
@@ -71,6 +89,16 @@ class DiarizeSessionUseCase(
      * engine entirely and lands on [SessionStatus.DIARIZED]; the
      * diarizer factory is not invoked, the WAV is not read, and
      * no speaker rows are written.
+     *
+     * When the user has at least one enrolled speaker, the use
+     * case runs a second pass after diarization: [SpeakerSampleCollector]
+     * builds one audio window per detected speaker, the embedder
+     * turns each window into a vector, and [SpeakerMatcher]
+     * matches them against the enrolled names. Speakers with a
+     * confident match overwrite the default `"Speaker N"` label.
+     * Any failure inside that pass is logged with `Log.w` and
+     * the diarization lands with default labels so a broken
+     * embedding model never drops the user's transcript.
      *
      * On success, an info-level line is written with the shared
      * [TAG] (`adb logcat -s ConvoScribe`) so the owner can confirm
@@ -120,10 +148,19 @@ class DiarizeSessionUseCase(
                 SegmentSpan(id = segment.id, startMs = segment.startMs, endMs = segment.endMs)
             }
             val assignment = SpeakerAssigner.assign(spans, turns)
+            val labels = computeLabels(
+                sessionId = sessionId,
+                samples = samples,
+                turns = turns,
+                rawToIndex = assignment.rawToIndex,
+                speakerCount = assignment.speakerCount,
+                settings = speakerSettings
+            )
             repository.applyDiarization(
                 sessionId = sessionId,
                 assignments = assignment.speakerBySegment,
-                speakerCount = assignment.speakerCount
+                speakerCount = assignment.speakerCount,
+                labels = labels
             )
             val durationMs = (System.nanoTime() - startedNanos) / 1_000_000L
             Log.i(
@@ -142,5 +179,78 @@ class DiarizeSessionUseCase(
             Log.w(TAG, "Diarization failed for session $sessionId", t)
             repository.setStatus(sessionId, SessionStatus.DIARIZATION_FAILED)
         }
+    }
+
+    /**
+     * Run the optional speaker-embedding pass: collect audio
+     * windows per detected speaker, embed them, and match the
+     * resulting vectors against the user's enrolled speakers.
+     *
+     * Skips the entire pass when:
+     *  * the session has zero speakers (no audio to embed);
+     *  * the user has no enrolled speakers (nothing to match
+     *    against — building the embedder would just waste
+     *    native memory).
+     *
+     * Embedding failures are caught and logged with `Log.w`
+     * because they must not fail the diarization: a broken
+     * speaker model is not a reason to lose the transcript.
+     * The function returns an empty map in that case so the
+     * repository falls back to its default `"Speaker N"` labels.
+     */
+    private suspend fun computeLabels(
+        sessionId: Long,
+        samples: FloatArray,
+        turns: List<SpeakerTurn>,
+        rawToIndex: Map<Int, Int>,
+        speakerCount: Int,
+        settings: com.convoscribe.settings.AppSettings
+    ): Map<Int, String> {
+        if (speakerCount == 0) return emptyMap()
+        val enrolledSpeakers = enrolled.getAll()
+        if (enrolledSpeakers.isEmpty()) return emptyMap()
+
+        return try {
+            val speakerWindows = withContext(Dispatchers.Default) {
+                SpeakerSampleCollector.collect(
+                    samples = samples,
+                    turns = turns,
+                    speakerMap = { raw -> rawToIndex[raw] }
+                )
+            }
+            if (speakerWindows.isEmpty()) return emptyMap()
+            val embeddings = withContext(Dispatchers.Default) {
+                embedderFactory.create().use { embedder ->
+                    speakerWindows.mapValues { (_, window) -> embedder.embed(window) }
+                }
+            }
+            SpeakerMatcher.assignNames(
+                embeddings = embeddings,
+                enrolled = enrolledSpeakers,
+                threshold = settings.speakerMatchThreshold
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "speaker embedding failed for session $sessionId", t)
+            emptyMap()
+        }
+    }
+
+    /**
+     * Default [EnrolledSpeakerStore] used by callers that did
+     * not pass one (the existing tests, for example). Returns
+     * an empty list every time so the embedding pass short-
+     * circuits and never instantiates an embedder.
+     */
+    private object EmptyEnrolledStore : EnrolledSpeakerStore {
+        override fun observeAll() = kotlinx.coroutines.flow.flowOf(
+            emptyList<com.convoscribe.data.EnrolledSpeakerEntity>()
+        )
+        override suspend fun getAll(): List<SpeakerMatcher.Enrolled> = emptyList()
+        override suspend fun save(name: String, embedding: FloatArray) {
+            error("EmptyEnrolledStore is read-only")
+        }
+
+        @Suppress("unused")
+        override suspend fun delete(id: Long) = Unit
     }
 }

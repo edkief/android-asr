@@ -167,21 +167,6 @@ class AppContainer(val context: Context) {
     )
 
     /**
-     * Use case that owns the "turn a TRANSCRIBED session into a
-     * DIARIZED one" pipeline. Called from the recording service
-     * after the controller's stop() returns, and from the
-     * crash-recovery loop on app start (TASK-19). Wired to the
-     * sherpa-backed [diarizerFactory] today; the `readSamples`
-     * parameter on the use case defaults to [com.convoscribe.audio.WavReader.readMono16k]
-     * so the test suite can inject a trivial stub.
-     */
-    val diarizeSessionUseCase = DiarizeSessionUseCase(
-        repository = sessionRepository,
-        diarizerFactory = diarizerFactory,
-        settings = settingsRepository
-    )
-
-    /**
      * Factory the v2 enrollment screen (TASK-32) uses to ask for
      * a fresh speaker embedder each time a user records a voice
      * sample. Wired to the sherpa-onnx engine because that's
@@ -198,6 +183,31 @@ class AppContainer(val context: Context) {
     val speakerEmbedderFactory: SpeakerEmbedderFactory = SherpaSpeakerEmbedderFactory(
         store = modelStore,
         settings = settingsRepository
+    )
+
+    /**
+     * Use case that owns the "turn a TRANSCRIBED session into a
+     * DIARIZED one" pipeline. Called from the recording service
+     * after the controller's stop() returns, and from the
+     * crash-recovery loop on app start (TASK-19). Wired to the
+     * sherpa-backed [diarizerFactory] today; the `readSamples`
+     * parameter on the use case defaults to [com.convoscribe.audio.WavReader.readMono16k]
+     * so the test suite can inject a trivial stub.
+     *
+     * The optional speaker-name pass (TASK-33) runs after the
+     * diarizer completes: collect per-speaker audio, embed each
+     * window through [speakerEmbedderFactory], and match the
+     * resulting vectors against [enrolledSpeakers]. Wiring is
+     * done here so production keeps the embedder model resident
+     * for the duration of one diarization but never across
+     * multiple sessions.
+     */
+    val diarizeSessionUseCase = DiarizeSessionUseCase(
+        repository = sessionRepository,
+        diarizerFactory = diarizerFactory,
+        settings = settingsRepository,
+        embedderFactory = speakerEmbedderFactory,
+        enrolled = enrolledSpeakers
     )
 
     /**

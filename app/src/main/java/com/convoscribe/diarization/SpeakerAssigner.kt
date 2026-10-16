@@ -26,10 +26,17 @@ data class SegmentSpan(
  *    across the whole map. The caller uses this to allocate
  *    "Speaker 1 / 2 / 3" labels in the UI without scanning the
  *    map twice.
+ *  * [rawToIndex] maps a raw engine speaker id (sherpa-onnx's
+ *    cluster label) to the renumbered index (`0, 1, 2, …`) the
+ *    assigner chose for it. Used by the post-diarization
+ *    embedding step to slice per-speaker audio: turn `speaker =
+ *    7` resolves to renumbered index `0` (assuming that was the
+ *    first speaker the assigner saw), etc.
  */
 data class Assignment(
     val speakerBySegment: Map<Long, Int?>,
-    val speakerCount: Int
+    val speakerCount: Int,
+    val rawToIndex: Map<Int, Int> = emptyMap()
 )
 
 /**
@@ -98,7 +105,7 @@ object SpeakerAssigner {
             val raw = rawBySegmentId[seg.id]
             seg.id to raw?.let { remap[it] }
         }
-        return Assignment(speakerBySegment, nextAssigned)
+        return Assignment(speakerBySegment, nextAssigned, remap)
     }
 
     /**

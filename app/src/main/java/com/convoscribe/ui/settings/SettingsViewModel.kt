@@ -36,7 +36,8 @@ data class SettingsForm(
     val maxChars: String = "24000",
     val numThreads: Int = 4,
     val numSpeakers: Int = -1,
-    val clusterThreshold: Float = 0.5f
+    val clusterThreshold: Float = 0.5f,
+    val speakerMatchThreshold: Float = 0.5f
 ) {
     /**
      * Build a [SettingsForm] from a persisted [AppSettings]. The
@@ -52,7 +53,8 @@ data class SettingsForm(
             maxChars = settings.maxTranscriptChars.toString(),
             numThreads = settings.numThreads,
             numSpeakers = settings.numSpeakers,
-            clusterThreshold = settings.clusterThreshold
+            clusterThreshold = settings.clusterThreshold,
+            speakerMatchThreshold = settings.speakerMatchThreshold
         )
     }
 }
@@ -215,6 +217,7 @@ class SettingsViewModel(
                 numThreads = form.numThreads,
                 numSpeakers = form.numSpeakers,
                 clusterThreshold = form.clusterThreshold,
+                speakerMatchThreshold = form.speakerMatchThreshold,
                 asrLanguage = _state.value.asrLanguage
             )
         }
