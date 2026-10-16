@@ -133,6 +133,6 @@
   },
   {
     "id": "TASK-34",
-    "passes": false
+    "passes": true
   }
 ]

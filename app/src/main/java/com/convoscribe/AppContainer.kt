@@ -229,6 +229,24 @@ class AppContainer(val context: Context) {
     )
 
     /**
+     * Use case that promotes a session's diarized speaker to a
+     * named, enrolled speaker without a separate recording
+     * step: it slices the speaker's audio out of the session's
+     * WAV, embeds it through [speakerEmbedderFactory] and
+     * saves the vector through [enrolledSpeakers] (TASK-34).
+     * The same session row is renamed in the same call so the
+     * transcript reflects the new label without a separate
+     * "Rename" tap. Wired here so production keeps the
+     * embedder model resident for the duration of one
+     * promotion but never across multiple sessions.
+     */
+    val enrollFromSessionUseCase = com.convoscribe.diarization.EnrollFromSessionUseCase(
+        repository = sessionRepository,
+        embedderFactory = speakerEmbedderFactory,
+        store = enrolledSpeakers
+    )
+
+    /**
      * Dedicated OkHttp client for the LLM streaming endpoint. The
      * shared [httpClient] is sized for model downloads (120 s read
      * timeout); an LLM stream can run for several minutes, so the

@@ -7,12 +7,16 @@ import com.convoscribe.data.SessionStatus
 import com.convoscribe.data.SpeakerEntity
 import com.convoscribe.data.TranscriptFormatter
 import com.convoscribe.data.TranscriptLine
+import com.convoscribe.diarization.EnrollFromSessionUseCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -59,11 +63,19 @@ data class SessionUiState(
  * [transcriptText] is a non-suspending read of the latest cached
  * state; the share button calls it on the main thread because
  * building the share intent has to happen there.
+ *
+ * [snackbar] is a one-shot `Flow<String>` that the screen
+ * collects in a `LaunchedEffect` to surface transient feedback
+ * (the "remember this voice" enrollment either succeeds silently
+ * or surfaces its error). Backed by a buffered [Channel] so a
+ * message emitted while the screen is being recomposed is not
+ * lost and never re-fires on rotation.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionViewModel(
     private val sessionId: Long,
-    private val repository: SessionRepository
+    private val repository: SessionRepository,
+    private val enrollFromSession: EnrollFromSessionUseCase? = null
 ) : ViewModel() {
 
     val uiState: StateFlow<SessionUiState> = repository.observeSession(sessionId)
@@ -89,6 +101,18 @@ class SessionViewModel(
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = SessionUiState()
         )
+
+    /**
+     * Buffered channel of snackbar messages. Capacity `Channel.BUFFERED`
+     * keeps the coroutine from suspending on emit (the screen may
+     * be in the middle of a configuration change), and
+     * [receiveAsFlow] guarantees each value is consumed exactly
+     * once.
+     */
+    private val _snackbar = Channel<String>(Channel.BUFFERED)
+
+    /** One-shot snackbar messages; the screen collects this in a [androidx.compose.runtime.LaunchedEffect]. */
+    val snackbar: Flow<String> = _snackbar.receiveAsFlow()
 
     /**
      * Plain-text export of the current transcript. Reads the
@@ -128,6 +152,38 @@ class SessionViewModel(
     fun renameSession(title: String) {
         viewModelScope.launch {
             repository.renameSession(sessionId = sessionId, title = title)
+        }
+    }
+
+    /**
+     * Rename a speaker and, in the same call, enroll the
+     * speaker's audio as a known voice so future recordings
+     * label it automatically (TASK-34).
+     *
+     * The rename runs unconditionally — the screen's checkbox
+     * gates whether this method is called in the first place —
+     * and the use case handles the embedding + persistence. On
+     * success, a positive snackbar message is emitted and the
+     * transcript re-renders with the new label through the
+     * speakers flow. On failure (typically the "not enough
+     * speech from this speaker (need 3 s)" floor), the
+     * exception's message is surfaced verbatim through the same
+     * snackbar channel so the user can react to it without the
+     * rename being undone (the rename still landed; the
+     * enrollment was the failing step).
+     *
+     * No-op when [enrollFromSession] was not wired in (i.e. a
+     * test that does not care about the snackbar / use case).
+     */
+    fun renameAndRemember(index: Int, name: String) {
+        val useCase = enrollFromSession ?: return
+        viewModelScope.launch {
+            try {
+                useCase.run(sessionId = sessionId, speakerIndex = index, name = name)
+                _snackbar.trySend("Remembered \"${name.trim()}\" for future recordings")
+            } catch (t: Throwable) {
+                _snackbar.trySend(t.message ?: t.javaClass.simpleName)
+            }
         }
     }
 }

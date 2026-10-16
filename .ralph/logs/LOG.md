@@ -1,3 +1,58 @@
+## 2026-10-16 — TASK-34: v2 save a session speaker as a known speaker
+
+Added the "remember this voice" flow that lets the user promote
+a session's diarized speaker to an enrolled voice without going
+back to the dedicated "Known speakers" screen.
+
+`diarization/EnrollFromSessionUseCase.kt`: new use case that
+reads the WAV (delegated to a `readSamples` lambda for
+testability), slices the audio of the requested speaker index
+out of the session's segments in `startMs` order, caps it at
+30 s = 480 000 samples (preferring the suffix of the next
+window when the cap bites, matching `SpeakerSampleCollector`),
+rejects anything shorter than 3 s with the verbatim message
+`Not enough speech from this speaker (need 3 s)`, embeds
+through the speaker embedder factory's `use { }` block and
+saves the vector through `EnrolledSpeakerStore.save(name.trim(),
+embedding)`. The same call renames the speaker in the session
+through `SessionRepository.renameSpeaker`, so the transcript
+label flips without a second tap.
+
+`AppContainer.kt`: exposes `enrollFromSessionUseCase` so the
+session-detail screen has a use-case reference to hand to the
+ViewModel.
+
+`ui/session/SessionViewModel.kt`: accepts an optional
+`EnrollFromSessionUseCase` and adds `renameAndRemember(index,
+name)` which runs the use case on `viewModelScope` and
+broadcasts a success / failure message through a buffered
+`Channel<String>` exposed as a `Flow<String>` for the screen to
+collect in a `LaunchedEffect`. The optional parameter keeps
+existing ViewModel-only tests working.
+
+`ui/session/SessionScreen.kt`: the speaker rename dialog now
+renders a "Remember this voice" checkbox beneath the name
+field. When checked, Save calls `renameAndRemember`; when
+unchecked, it calls the existing `renameSpeaker`. A
+`SnackbarHostState` wired to `vm.snackbar` surfaces the use
+case's success ("Remembered \"X\" for future recordings") or
+verbatim error ("Not enough speech from this speaker (need 3 s)")
+without a red error label taking up vertical space.
+
+`res/values/strings.xml`: adds `session_rename_remember_voice`
+and `session_rename_remember_voice_help`.
+
+`diarization/EnrollFromSessionUseCaseTest.kt`: Robolectric +
+in-memory Room + fake embedder + `readSamples` returning a 60 s
+`FloatArray`. Covers the three acceptance bullets (5 s ⇒
+saved + renamed; 2 s ⇒ throws verbatim and saves nothing; 40 s
+of segments ⇒ embedder receives exactly 480 000 samples) plus
+defensive cases for no-matching-segments and the
+`extractSpeakerAudio` helper directly.
+
+Verify (`source scripts/env.sh && ./gradlew ktlintCheck
+testDebugUnitTest lintDebug assembleDebug`) passes.
+
 ## 2026-10-16 — TASK-33: v2 name enrolled speakers automatically after diarization
 
 Wired the post-diarization speaker-name pass so a fresh

@@ -35,6 +35,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -46,6 +47,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -132,7 +137,8 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
             initializer {
                 SessionViewModel(
                     sessionId = sessionId,
-                    repository = container.sessionRepository
+                    repository = container.sessionRepository,
+                    enrollFromSession = container.enrollFromSessionUseCase
                 )
             }
         }
@@ -164,6 +170,19 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     val summaryState by summaryVm.state.collectAsStateWithLifecycle()
     val askState by askVm.state.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(vm) {
+        // Surface one-shot messages from the ViewModel: a
+        // successful "remember this voice" enrollment emits a
+        // confirmation, an enrollment failure emits the
+        // exception's message verbatim (e.g. "Not enough speech
+        // from this speaker (need 3 s)"). Each Channel entry is
+        // consumed exactly once, so a configuration change does
+        // not double-fire the snackbar.
+        vm.snackbar.collect { message ->
+            snackbarHostState.showSnackbar(message = message, duration = SnackbarDuration.Short)
+        }
+    }
 
     SessionBody(
         title = state.title,
@@ -173,6 +192,7 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
         notFound = state.notFound,
         summaryState = summaryState,
         askState = askState,
+        snackbarHostState = snackbarHostState,
         onBack = { navController.popBackStack() },
         onShare = {
             // Build the share intent on the main thread; the
@@ -192,6 +212,7 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
             }
         },
         onRenameSpeaker = { index, label -> vm.renameSpeaker(index, label) },
+        onRenameAndRemember = { index, label -> vm.renameAndRemember(index, label) },
         onRenameSession = { title -> vm.renameSession(title) },
         onDiarizeAgain = {
             // Hand off to the foreground service, which
@@ -232,9 +253,11 @@ internal fun SessionBody(
     notFound: Boolean,
     summaryState: SummaryUiState,
     askState: AskUiState,
+    snackbarHostState: SnackbarHostState,
     onBack: () -> Unit,
     onShare: () -> Unit,
     onRenameSpeaker: (Int, String) -> Unit,
+    onRenameAndRemember: (Int, String) -> Unit,
     onRenameSession: (String) -> Unit,
     onDiarizeAgain: () -> Unit,
     onSummarise: () -> Unit,
@@ -255,6 +278,16 @@ internal fun SessionBody(
     var renameSessionOpen by remember { mutableStateOf(false) }
     var clearQuestionsOpen by remember { mutableStateOf(false) }
     Scaffold(
+        snackbarHost = {
+            // One-line snackbar with a short duration: the
+            // "remember this voice" success / failure message is
+            // short and ephemeral, so a tall multi-line layout
+            // would just take up vertical space without
+            // conveying more information.
+            SnackbarHost(hostState = snackbarHostState) { data ->
+                Snackbar(snackbarData = data)
+            }
+        },
         topBar = {
             TopAppBar(
                 title = { Text(text = title) },
@@ -367,8 +400,14 @@ internal fun SessionBody(
         RenameDialog(
             initialValue = current,
             titleRes = R.string.session_rename_speaker_title,
-            onConfirm = { newLabel ->
-                onRenameSpeaker(idx, newLabel)
+            checkboxLabelRes = R.string.session_rename_remember_voice,
+            checkboxHelpRes = R.string.session_rename_remember_voice_help,
+            onConfirm = { newLabel, rememberVoice ->
+                if (rememberVoice) {
+                    onRenameAndRemember(idx, newLabel)
+                } else {
+                    onRenameSpeaker(idx, newLabel)
+                }
                 renameSpeakerIndex = null
             },
             onDismiss = { renameSpeakerIndex = null }
@@ -379,7 +418,7 @@ internal fun SessionBody(
         RenameDialog(
             initialValue = title,
             titleRes = R.string.session_rename_session_title,
-            onConfirm = { newTitle ->
+            onConfirm = { newTitle, _ ->
                 onRenameSession(newTitle)
                 renameSessionOpen = false
             },
@@ -418,26 +457,70 @@ internal fun SessionBody(
  * disable the Save button so the user cannot accidentally blank
  * out a label (the repository also defends against this, but the
  * UI gate gives immediate feedback).
+ *
+ * When [checkboxLabelRes] is non-null the dialog also renders a
+ * checkbox row beneath the text field. The checkbox starts
+ * unchecked and the screen reads its value through
+ * [onConfirm]'s second parameter. The session-rename flow passes
+ * `null` so the checkbox row is hidden; the speaker-rename flow
+ * passes the "Remember this voice" label / help string so the
+ * user can promote a session speaker to a known voice in one
+ * tap (TASK-34).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RenameDialog(initialValue: String, titleRes: Int, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+private fun RenameDialog(
+    initialValue: String,
+    titleRes: Int,
+    onConfirm: (String, Boolean) -> Unit,
+    onDismiss: () -> Unit,
+    checkboxLabelRes: Int? = null,
+    checkboxHelpRes: Int? = null
+) {
     var text by rememberSaveable(initialValue) { mutableStateOf(initialValue) }
+    var rememberVoice by rememberSaveable(initialValue) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = stringResource(titleRes)) },
         text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                singleLine = true,
-                label = { Text(text = stringResource(R.string.session_rename_label)) }
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    label = { Text(text = stringResource(R.string.session_rename_label)) }
+                )
+                if (checkboxLabelRes != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = rememberVoice,
+                            onCheckedChange = { rememberVoice = it }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(checkboxLabelRes),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            if (checkboxHelpRes != null) {
+                                Text(
+                                    text = stringResource(checkboxHelpRes),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         },
         confirmButton = {
             TextButton(
                 enabled = text.isNotBlank(),
-                onClick = { onConfirm(text) }
+                onClick = { onConfirm(text, rememberVoice) }
             ) {
                 Text(text = stringResource(R.string.session_rename_save))
             }

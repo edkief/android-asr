@@ -115,6 +115,8 @@
     <string name="session_rename_label">Name</string>
     <string name="session_rename_save">Save</string>
     <string name="session_rename_cancel">Cancel</string>
+    <string name="session_rename_remember_voice">Remember this voice</string>
+    <string name="session_rename_remember_voice_help">ConvoScribe will recognise this speaker in future recordings.</string>
     <string name="session_summary_summarise">Summarise</string>
     <string name="session_summary_regenerate">Regenerate</string>
     <string name="session_summary_stop">Stop</string>
