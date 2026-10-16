@@ -46,7 +46,7 @@ import kotlinx.coroutines.withContext
  *   (name + embedding). The use case never touches Room
  *   directly.
  */
-class EnrollSpeakerUseCase(
+open class EnrollSpeakerUseCase(
     private val audioSource: com.convoscribe.audio.AudioSource,
     private val embedderFactory: SpeakerEmbedderFactory,
     private val repo: EnrolledSpeakerStore
@@ -73,7 +73,7 @@ class EnrollSpeakerUseCase(
      *   collected so far, in `0f..1f`. May be called from the
      *   collector's dispatcher.
      */
-    suspend fun record(durationMs: Long = 15_000L, onProgress: (Float) -> Unit = {}): FloatArray {
+    open suspend fun record(durationMs: Long = 15_000L, onProgress: (Float) -> Unit = {}): FloatArray {
         val targetSamples = durationMs * AudioSpec.SAMPLE_RATE / 1000L
         val buffer = ArrayList<ShortArray>((targetSamples / AudioSpec.CHUNK_SAMPLES).toInt() + 1)
         var collected: Long = 0L
@@ -112,7 +112,7 @@ class EnrollSpeakerUseCase(
      * @throws IllegalArgumentException if [name] is blank or
      *   [samples] is shorter than [MIN_SAMPLES].
      */
-    suspend fun enroll(name: String, samples: FloatArray) {
+    open suspend fun enroll(name: String, samples: FloatArray) {
         val trimmed = requireNotBlank(name)
         require(samples.size.toLong() >= MIN_SAMPLES) {
             "Need at least $MIN_SAMPLES samples (3 s of 16 kHz audio), got ${samples.size}"

@@ -12,6 +12,7 @@ import com.convoscribe.ui.record.RecordScreen
 import com.convoscribe.ui.session.SessionScreen
 import com.convoscribe.ui.settings.SettingsScreen
 import com.convoscribe.ui.setup.ModelSetupScreen
+import com.convoscribe.ui.speakers.SpeakersScreen
 
 private const val ROUTE_HOME = "home"
 private const val ROUTE_SETUP = "setup"
@@ -20,6 +21,7 @@ private const val ROUTE_RECORD = "record"
 private const val ROUTE_SESSION_DETAIL = "session/{id}"
 private const val ROUTE_ENGINE_CHECK = "engine-check"
 private const val ROUTE_SETTINGS = "settings"
+private const val ROUTE_SPEAKERS = "speakers"
 
 /**
  * Single navigation graph for the app. The first-run model download
@@ -39,6 +41,12 @@ private const val ROUTE_SETTINGS = "settings"
  *  - `settings` — LLM endpoint, transcription engine, threads,
  *    speakers. Form saves on save/back; engine changes are
  *    written immediately by the segmented button.
+ *  - `speakers` — enroll a known speaker (record a 15-second
+ *    voice sample so the diarizer can label the cluster with
+ *    the speaker's real name), list the enrolled names, delete
+ *    them. Reachable from the Speakers section of Settings; the
+ *    screen renders an "Open setup" hint when the embedding
+ *    model is not installed.
  *  - `session/{id}` — session-detail screen (transcript tab,
  *    summary tab and ask tab). The route id is a `Long` so the
  *    home list's `session/${row.id}` push lands on the right row.
@@ -87,6 +95,9 @@ fun AppNavHost(startDestination: String = ROUTE_HOME) {
         }
         composable(ROUTE_SETTINGS) {
             SettingsScreen(navController = navController)
+        }
+        composable(ROUTE_SPEAKERS) {
+            SpeakersScreen(navController = navController)
         }
         composable(
             route = ROUTE_SESSION_DETAIL,

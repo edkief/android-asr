@@ -148,4 +148,23 @@
     <string name="settings_about_sherpa_licence">Apache-2.0</string>
     <string name="settings_about_qnn_name">Qualcomm AI Engine Direct (QNN)</string>
     <string name="settings_about_qnn_licence">Qualcomm licence (redistributed by sherpa-onnx)</string>
+    <string name="settings_speakers_known_row">Known speakers</string>
+    <string name="settings_speakers_known_button">Manage</string>
+    <string name="speakers_title">Known speakers</string>
+    <string name="speakers_back">Back</string>
+    <string name="speakers_explanation">Record about 15 seconds of one person speaking normally. ConvoScribe will then recognise their voice in new recordings.</string>
+    <string name="speakers_name_label">Speaker name</string>
+    <string name="speakers_record">Record sample</string>
+    <string name="speakers_cancel">Cancel</string>
+    <string name="speakers_mic_required">Microphone permission is required to record a voice sample.</string>
+    <string name="speakers_remaining">%1$d s remaining</string>
+    <string name="speakers_processing">Processing…</string>
+    <string name="speakers_section_enrolled">Enrolled</string>
+    <string name="speakers_empty">No enrolled speakers yet.</string>
+    <string name="speakers_open_setup">Open setup</string>
+    <string name="speakers_delete_title">Remove this speaker?</string>
+    <string name="speakers_delete_message">ConvoScribe will no longer recognise %1$s in future recordings.</string>
+    <string name="speakers_delete_confirm">Remove</string>
+    <string name="speakers_delete_cancel">Cancel</string>
+    <string name="speakers_delete_cd">Remove %1$s</string>
 </resources>

@@ -216,7 +216,8 @@ fun SettingsScreen(navController: NavHostController) {
                 },
                 onThresholdChange = { value ->
                     vm.update(state.form.copy(clusterThreshold = value))
-                }
+                },
+                onOpenKnownSpeakers = { navController.navigate("speakers") }
             )
             AboutSection()
             Spacer(Modifier.height(24.dp))
@@ -499,7 +500,8 @@ private fun SpeakersSection(
     numSpeakers: Int,
     threshold: Float,
     onNumSpeakersChange: (Int) -> Unit,
-    onThresholdChange: (Float) -> Unit
+    onThresholdChange: (Float) -> Unit,
+    onOpenKnownSpeakers: () -> Unit
 ) {
     SectionHeader(text = stringResource(R.string.settings_section_speakers))
     var speakersExpanded by remember { mutableStateOf(false) }
@@ -567,6 +569,27 @@ private fun SpeakersSection(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+    Spacer(Modifier.height(12.dp))
+    // "Known speakers" row: navigates to the SpeakersScreen where
+    // the user records a 15-second voice sample and labels
+    // diarization clusters with the speaker's real name. Lives
+    // inside the Speakers section because both controls feed the
+    // diarization pipeline (number-of-speakers / threshold for the
+    // clustering algorithm; the enrollment list for the cosine
+    // match against each cluster's centroid).
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = stringResource(R.string.settings_speakers_known_row),
+            style = MaterialTheme.typography.bodyLarge
+        )
+        OutlinedButton(onClick = onOpenKnownSpeakers) {
+            Text(text = stringResource(R.string.settings_speakers_known_button))
+        }
+    }
 }
 
 /**
