@@ -12,3 +12,4 @@ app/libs/*.jar
 app/libs/*.aar
 app/src/main/jniLibs/
 captures/
+dist/

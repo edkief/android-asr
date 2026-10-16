@@ -49,6 +49,8 @@ source scripts/env.sh
 
 ## Install
 
+Run `bash scripts/build-apk.sh` to build and copy the APK to `dist/convoscribe-<versionName>-debug.apk` (the wrapper prints the exact path).
+
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```

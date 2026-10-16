@@ -1,3 +1,47 @@
+## 2026-10-16 — TASK-35: package the debug APK into a versioned dist artifact
+
+Wrapped the full verify command in `scripts/build-apk.sh` so a
+single invocation builds the debug APK and writes it to a
+versioned, gitignored path the owner can sideload by hand.
+
+`scripts/build-apk.sh` (executable, `set -euo pipefail`): resolves
+the repo root from its own location, sources `scripts/env.sh`,
+calls `./gradlew --stop` to drop any leftover daemon, then runs
+the verify command `./gradlew ktlintCheck testDebugUnitTest
+lintDebug assembleDebug`. Reads `versionName` out of
+`app/build/outputs/apk/debug/output-metadata.json` with the
+`grep -oP '"versionName"\s*:\s*"\K[^"]+'` extraction the spec
+asked for (no `jq` dependency), `mkdir -p dist/`, and `cp -f`s the
+APK to `dist/convoscribe-<versionName>-debug.apk`. Prints
+`APK: <path>`, `Size: <bytes> (<human>)`, `sha256: <hash>` and the
+matching `adb install -r <path>` command, then `./gradlew --stop`
+again. Human-readable size uses `numfmt --to=iec` when present
+and falls back to an awk ladder (B / K / M / G / T) otherwise;
+the wrapper exits non-zero if the APK or the metadata are
+missing, and `set -euo pipefail` propagates any Gradle failure.
+`adb install` is printed but never executed.
+
+`.gitignore`: appended a single `dist/` line so the versioned
+artifact is never committed.
+
+`README.md` (Install section): one sentence above the existing
+`adb install -r` block pointing the reader at
+`bash scripts/build-apk.sh` and the resulting
+`dist/convoscribe-<versionName>-debug.apk` path.
+
+`docs/MANUAL_TEST.md` (Install section, right after the
+`source scripts/env.sh && ./gradlew installDebug` block): the same
+one-line pointer, plus the note that `installDebug` and
+`build-apk.sh` produce the same APK and that `build-apk` also
+runs the full verify command and writes the versioned copy.
+
+Verify `bash scripts/build-apk.sh` exits 0 (ktlint + 290 unit
+tests + lint + assembleDebug all pass), `dist/convoscribe-0.1.0-
+debug.apk` is byte-identical to `app/build/outputs/apk/debug/
+app-debug.apk` (sha256 `abd0369bc5a297cf449b924ef02463e8a0a4bf4
+05bc96f82beb0c5a9d64e7b04`), and `git check-ignore -v dist/`
+prints `.gitignore:15:dist/`. Marked `TASK-35` as passes.
+
 ## 2026-10-16 — TASK-34: v2 save a session speaker as a known speaker
 
 Added the "remember this voice" flow that lets the user promote
