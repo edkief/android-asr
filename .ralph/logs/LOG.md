@@ -1,60 +1,49 @@
-## 2026-10-15 — TASK-30: v2 enrolled speakers table and embedding math
+## 2026-10-15 — TASK-31: v2 speaker embedder (sherpa) and enroll-from-audio use case
 
-Started the v2 speaker-enrollment feature: added the
-`enrolled_speakers` Room table (with a unique index on `name`),
-bumped `AppDatabase` to `version = 2` with an auto-migration
-from 1, and wrote the small but hot embedding-codec layer that
-goes between `FloatArray` (the model output) and `ByteArray`
-(the Room column). Cosine matching lives in
-`diarization/SpeakerMatcher` as a pure-Kotlin `object` so the
-greedy name-assignment algorithm can be unit-tested without
-Robolectric; the repository (`EnrolledSpeakerRepository`)
-sits behind an `EnrolledSpeakerStore` interface so the
-later-task enrollment UI never touches Room.
+Added the v2 "enroll this speaker by voice" pipeline so a fresh
+recording can label matched voices with the user's real names.
 
-Wired `enrolledSpeakers: EnrolledSpeakerStore =
-EnrolledSpeakerRepository(database.enrolledSpeakerDao())` into
-`AppContainer` and committed `2.json` (the new schema) under
-`app/schemas/com.convoscribe.data.AppDatabase/`. New tests:
-`EmbeddingCodecTest` (round-trip, little-endian, 4 bytes/float,
-zero + signed-zero preservation), `SpeakerMatcherTest` (cosine
-identity/orthogonal/zero/mismatched-sizes, `assignNames` at
-threshold 0.5 → both names, threshold 0.7 → only the 0.9
-match), and `EnrolledSpeakerRepositoryTest` (Robolectric, in-
-memory DB: REPLACE strategy keeps one row per name and `Flow`
-re-emits on insert).
+`diarization/SpeakerEmbedder.kt`: engine-agnostic façade
+(`SpeakerEmbedder : Closeable { fun embed(FloatArray): FloatArray }`)
+plus a `fun interface SpeakerEmbedderFactory`. Kept thin so the
+use-case test never touches sherpa.
 
-`source scripts/env.sh && ./gradlew ktlintCheck
-testDebugUnitTest lintDebug assembleDebug` exits 0 — 279 tests,
-0 failures.
+`engine/sherpa/SherpaSpeakerEmbedder.kt`: wraps
+`sherpa-onnx` 1.13.8's `SpeakerEmbeddingExtractor` against the
+same `wespeaker_en_voxceleb_resnet34_LM.onnx` file the
+diarizer uses, so an enrollment embedding is comparable to
+diarizer embeddings. `embed` builds an `OnlineStream`, runs
+`acceptWaveform(samples, 16_000)`, `inputFinished()`, checks
+`extractor.isReady`, returns `extractor.compute`, and releases
+the stream in `finally`. `SherpaSpeakerEmbedderFactory(store,
+settings)` throws `IllegalStateException("Model not installed:
+…")` when the embedding file is missing, mirroring the other
+factory error messages. Wired `speakerEmbedderFactory:
+SpeakerEmbedderFactory = SherpaSpeakerEmbedderFactory(...)`
+and `enrollSpeakerUseCase = EnrollSpeakerUseCase(...)` into
+`AppContainer`.
 
-## 2026-10-15 — TASK-29: Manual on-device test guide and README completion
+`diarization/EnrollSpeakerUseCase.kt`: `record(durationMs,
+onProgress)` collects from the audio source, concatenates
+chunks via `ShortArray.copyInto`, truncates the final chunk so
+the returned float array is exactly `durationMs * 16_000 / 1000`
+samples (the spec's exact-length acceptance), and reports the
+0..1 progress. `enroll(name, samples)` requires a non-blank
+name and `samples.size ≥ 48_000` (3 s at 16 kHz),
+runs the embedder on `Dispatchers.Default`, closes it via
+`use { }`, and saves via `EnrolledSpeakerStore.save`.
 
-Wrote `docs/MANUAL_TEST.md` with 18 numbered headings (16 distinct
-checks per the spec, with 2 split into 2b/2c for the NPU / CPU
-engine-check paths). Each item has a Steps / Expected block and a
-combined troubleshooting section covers `adb logcat -s sherpa-onnx
-ConvoScribe AndroidRuntime`, where models live on disk,
-`/data/data/com.convoscribe/files/models`, `uses-native-library
-libcdsprpc.so`, the QNN error `14001` recovery
-(delete `encoder.bin`/`decoder.bin`/`joiner.bin` to force
-re-preparation), and `adb shell pm clear com.convoscribe` for a
-fresh start.
+`EnrollSpeakerUseCaseTest`: 6 tests with a fake
+`AudioSource` emitting 1 600-sample mute chunks (forever, or
+capped with `stopAfter`), a fake `SpeakerEmbedder` that returns
+`floatArrayOf(samples.size.toFloat(), 1f)`, and an in-memory
+fake `EnrolledSpeakerStore`. Covers the four acceptance cases
+(`record(1000)` returns 16 000 samples, progress reaches 1.0;
+`enroll(" Alice ", 64 000)` saves "Alice"; 16 000 samples and
+both empty + whitespace names throw) plus a sanity check on
+the fake store. Sherpa classes are never referenced from tests.
 
-Added `Log.kt` with a single shared `const val TAG = "ConvoScribe"`
-and pointed the existing `Log.w` calls in `DiarizeSessionUseCase`
-at it (removed the private `"DiarizeSessionUseCase"` companion).
-New `Log.i(TAG, …)` lines for the events the spec calls out —
-recording started (`session=` + `lang=`), recording stopped
-(`session=` + `durationMs=`), diarization completed
-(`session=` + `durationMs=` + `speakers=`), and model download
-completed (`bytesDone=` + `bundles=`). `grep 'const val TAG'` now
-finds exactly one definition; `grep 'Log\.[iw](TAG'` matches 8
-lines (6 real calls + 2 kdoc snippets in `Log.kt` itself).
-
-Expanded `README.md` with a Features list, an Architecture section
-that walks every package under `app/src/main/java/com/convoscribe/`
-with one line of prose each (`audio`, `models`, `asr`,
-`diarization`, `engine/sherpa`, `data`, `settings`, `llm`,
-`recording`, `service`, `enginecheck`, `ui/<screen>/`, `ui/theme/`),
-a Models table (bundleId, engine, size, files, source per row),
+Verify `source scripts/env.sh && ./gradlew ktlintCheck
+testDebugUnitTest lintDebug assembleDebug` exits 0 — 285 tests,
+0 failures (was 279, +6 for this task). Marked `TASK-31` as
+passes.

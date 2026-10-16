@@ -10,7 +10,10 @@ import com.convoscribe.data.EnrolledSpeakerStore
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.diarization.DiarizeSessionUseCase
 import com.convoscribe.diarization.DiarizerFactory
+import com.convoscribe.diarization.EnrollSpeakerUseCase
+import com.convoscribe.diarization.SpeakerEmbedderFactory
 import com.convoscribe.engine.sherpa.SherpaDiarizerFactory
+import com.convoscribe.engine.sherpa.SherpaSpeakerEmbedderFactory
 import com.convoscribe.engine.sherpa.SherpaTranscriberFactory
 import com.convoscribe.llm.ChatClient
 import com.convoscribe.llm.LlmConfig
@@ -176,6 +179,43 @@ class AppContainer(val context: Context) {
         repository = sessionRepository,
         diarizerFactory = diarizerFactory,
         settings = settingsRepository
+    )
+
+    /**
+     * Factory the v2 enrollment screen (TASK-32) uses to ask for
+     * a fresh speaker embedder each time a user records a voice
+     * sample. Wired to the sherpa-onnx engine because that's
+     * the only embedding extractor we ship today; the
+     * `fun interface` keeps the enrollment screen engine-
+     * agnostic. The factory refuses to build a
+     * [com.convoscribe.diarization.SpeakerEmbedder] when the
+     * `wespeaker_en_voxceleb_resnet34_LM.onnx` file is missing
+     * on disk (it throws `IllegalStateException("Model not
+     * installed: <id>")`) so the enrollment flow can surface a
+     * download hint, mirroring the transcriber and diarizer
+     * factories.
+     */
+    val speakerEmbedderFactory: SpeakerEmbedderFactory = SherpaSpeakerEmbedderFactory(
+        store = modelStore,
+        settings = settingsRepository
+    )
+
+    /**
+     * Use case that records a voice sample and enrolls it as a
+     * named speaker, so a fresh recording can label matched
+     * voices with the user's name in the diarized transcript
+     * (TASK-32 will surface this on the enrollment screen, and
+     * TASK-22 will thread the embeddings into
+     * [com.convoscribe.diarization.SpeakerMatcher]). Wired to
+     * the sherpa-backed [speakerEmbedderFactory] today; the
+     * mic source is the same one [recordingController] uses so
+     * the enrollment audio matches the recorder's quality and
+     * gain.
+     */
+    val enrollSpeakerUseCase = EnrollSpeakerUseCase(
+        audioSource = MicAudioSource(),
+        embedderFactory = speakerEmbedderFactory,
+        repo = enrolledSpeakers
     )
 
     /**
