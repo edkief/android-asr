@@ -112,7 +112,15 @@
     <string name="session_not_found">Session not found.</string>
     <string name="session_overflow">More</string>
     <string name="session_overflow_rename">Rename session</string>
-    <string name="session_overflow_diarize">Detect speakers again</string>
+    <string name="session_overflow_reidentify">Re-identify speakers…</string>
+    <string name="session_reidentify_title">Re-identify speakers</string>
+    <string name="session_reidentify_message">How many people speak in this recording? Names you gave speakers are kept.</string>
+    <string name="session_reidentify_auto">Automatic</string>
+    <plurals name="session_reidentify_count">
+        <item quantity="one">%d speaker</item>
+        <item quantity="other">%d speakers</item>
+    </plurals>
+    <string name="session_reidentify_confirm">Re-identify</string>
     <string name="session_rename_speaker_title">Rename speaker</string>
     <string name="session_rename_session_title">Rename session</string>
     <string name="session_rename_label">Name</string>

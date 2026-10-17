@@ -250,6 +250,16 @@ class SessionRepository(
     }
 
     /**
+     * Remember the speaker count chosen for [id] ("Re-identify
+     * speakers"): `-1` automatic, `1..10` fixed, `null` back to the
+     * Settings default. Every later diarization of the session uses
+     * it, including the one after a continued recording.
+     */
+    suspend fun setSessionSpeakerCount(id: Long, numSpeakers: Int?) {
+        sessionDao.setNumSpeakers(id, numSpeakers?.let { if (it < 1) -1 else it.coerceAtMost(10) })
+    }
+
+    /**
      * Stamp [durationMs] on [id]. Used by the crash-recovery loop
      * to compute the duration of a WAV that was left in a
      * half-closed state when the process was killed; the recorder

@@ -109,10 +109,15 @@ class DiarizeSessionUseCase(
      * duration, and the number of speakers the engine detected —
      * the three values the manual test checklist calls out as
      * worth recording.
+     *
+     * [numSpeakers], when given, is saved as the session's speaker
+     * count first ("Re-identify speakers"). The count used is the
+     * session's, else the Settings default.
      */
-    suspend fun run(sessionId: Long, onProgress: (Float) -> Unit = {}) {
+    suspend fun run(sessionId: Long, onProgress: (Float) -> Unit = {}, numSpeakers: Int? = null) {
         val startedNanos = System.nanoTime()
         try {
+            if (numSpeakers != null) repository.setSessionSpeakerCount(sessionId, numSpeakers)
             repository.setStatus(sessionId, SessionStatus.DIARIZING)
             val session = repository.getSession(sessionId)
                 ?: run {
@@ -140,7 +145,7 @@ class DiarizeSessionUseCase(
                 diarizerFactory.create().use { diarizer ->
                     diarizer.diarize(
                         samples = samples,
-                        numSpeakers = speakerSettings.numSpeakers,
+                        numSpeakers = session.numSpeakers ?: speakerSettings.numSpeakers,
                         threshold = speakerSettings.clusterThreshold,
                         onProgress = onProgress
                     )

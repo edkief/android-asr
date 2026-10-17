@@ -61,6 +61,9 @@ interface SessionDao {
      * repository enforces the 100-character cap so the DAO stays
      * free of business rules.
      */
+    @Query("UPDATE sessions SET numSpeakers = :numSpeakers WHERE id = :id")
+    suspend fun setNumSpeakers(id: Long, numSpeakers: Int?)
+
     @Query("UPDATE sessions SET title = :title WHERE id = :id")
     suspend fun rename(id: Long, title: String)
 }

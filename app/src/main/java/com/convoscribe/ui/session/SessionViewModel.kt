@@ -43,7 +43,9 @@ data class SessionUiState(
     val status: SessionStatus? = null,
     val lines: List<TranscriptLine> = emptyList(),
     val speakers: List<SpeakerEntity> = emptyList(),
-    val notFound: Boolean = false
+    val notFound: Boolean = false,
+    /** Speaker count chosen for this session; `null` follows Settings. */
+    val numSpeakers: Int? = null
 )
 
 /**
@@ -91,7 +93,8 @@ class SessionViewModel(
                         title = session.title,
                         status = session.status,
                         lines = TranscriptFormatter.lines(segments, speakers),
-                        speakers = speakers
+                        speakers = speakers,
+                        numSpeakers = session.numSpeakers
                     )
                 }
             }
