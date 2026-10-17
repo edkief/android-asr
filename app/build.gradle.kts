@@ -30,6 +30,24 @@ android {
         }
     }
 
+    // Debug builds normally sign with the per-machine
+    // ~/.android/debug.keystore, so an APK built in the container and one
+    // built on the host have different signatures and `adb install -r`
+    // fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE. When
+    // app/debug.keystore exists, every machine signs with it instead.
+    // It uses the standard debug-keystore credentials.
+    val sharedDebugKeystore = file("debug.keystore")
+    if (sharedDebugKeystore.exists()) {
+        signingConfigs {
+            getByName("debug") {
+                storeFile = sharedDebugKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
