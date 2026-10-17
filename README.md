@@ -8,19 +8,34 @@ OpenAI-compatible endpoint for summaries and questions about the session.
 
 ## Features
 
-- **Live, on-device speech-to-text** while recording. The engine is
-  user-selected in Settings; there is no automatic fallback.
-  - **NPU (default)** — Nemotron Speech Streaming EN 0.6B on the
-    Hexagon DSP via sherpa-onnx's QNN backend, English only.
-  - **CPU** — Kroko streaming zipformer, English and French.
+- **Live, on-device speech-to-text** while recording. There is no
+  automatic fallback between engines: until you pick one in Settings,
+  the app uses the CPU, and switches to the NPU once Engine check has
+  seen it work on the device.
+  - **CPU** (default) — Kroko streaming zipformer, English and French.
+  - **NPU** — Nemotron Speech Streaming EN 0.6B on the
+    Hexagon DSP via sherpa-onnx's QNN backend, English only. Some
+    Qualcomm devices have no usable NPU (the Boox Note Air 6C ships with
+    it disabled). Engine check runs the NPU in a separate process, so a
+    failure there is reported instead of closing the app.
 - **Engine check** screen that runs an end-to-end pass on a bundled
   sample wave and reports the device, free storage, first-run QNN
   preparation time, real-time factor (RTF) and recognised text for
   whichever engine is requested. Reports can be copied / shared so
   you can attach them to a bug report.
 - **On-device speaker diarization** after a recording stops. Each
-  transcript line is labelled `Speaker 1`, `Speaker 2`, … and the
-  user can rename a speaker (e.g. `Speaker 1` → `Alice`).
+  transcript line is labelled `Speaker 1`, `Speaker 2`, …, and a line
+  that contains a speaker change is split there, using the recognizer's
+  per-word timings. Rename a speaker (e.g. `Speaker 1` → `Alice`), or use
+  *Re-identify speakers…* in the session menu to re-run it with a fixed
+  number of people (2, 3, 4 or automatic). The count is remembered for
+  the session, and names you typed are kept.
+- **Known voices.** Enroll people in Settings → Speakers, or use
+  *Remember this voice* when renaming a speaker. Each enrollment adds a
+  voice sample (up to 5 per person); new recordings label matching
+  speakers by name.
+- **Continue a recording** from its session screen (mic button). The
+  audio and transcript are appended to the same session.
 - **Foreground microphone service** keeps recording alive while the
   screen is off or the app is in the background, with a
   Stop action on the persistent notification.
@@ -60,6 +75,26 @@ so plain-HTTP local endpoints (e.g. `http://192.168.1.10:8000/v1`,
 Ollama at `http://<host>:11434/v1`) work without a custom
 `network_security_config`. Do not place a stricter network
 security config on the app — that would block the local endpoint.
+
+## Boox / Onyx e-readers
+
+Tested on a Boox Note Air 6C (Qualcomm QCS6690, Android 16):
+
+- **No NPU.** The chip's NPU is disabled in hardware (the kernel log says
+  `nsp part defective` and there is no `cdsp` remote processor), so use the
+  CPU engine, which is the default until Engine check sees the NPU work.
+  Engine check's "Check NPU" reports the failure without closing the app.
+- **The CPU engine is fast enough.** Check CPU reports a real-time factor
+  of about 0.03 (3.8 s of audio in 0.12 s with 4 threads).
+- **Screen-off recording works.** Onyx refuses the recording wake lock
+  (`WakeLock tag:ConvoScribe:recording … is forbidden` in logcat), but the
+  foreground microphone service keeps the app running. In a 10-minute test
+  with the screen off and the device dozing, the recording captured 610.7 s
+  of audio in 611 s, with no gaps, while Android froze or killed other
+  background apps. No settings change was needed.
+- If recordings ever stop with the screen off on your device, exempt
+  ConvoScribe from Onyx's app freezing and background restrictions in the
+  Boox app-management settings, then test again.
 
 ## Manual testing
 
@@ -248,6 +283,12 @@ idempotent: a second `bash scripts/build-sherpa-onnx.sh` prints
 source scripts/env.sh
 ./gradlew ktlintCheck testDebugUnitTest lintDebug assembleDebug
 ```
+
+To measure speaker attribution on real recordings, and to tune the
+clustering threshold, use the desktop evaluation tool in
+[`scripts/eval/`](scripts/eval/README.md). It runs the app's models and
+settings with sherpa-onnx's Python package and scores hand-labelled
+recordings.
 
 The `testDebugUnitTest` phase runs JUnit 4 + Robolectric +
 Turbine in the JVM; sherpa-onnx classes are never instantiated in
