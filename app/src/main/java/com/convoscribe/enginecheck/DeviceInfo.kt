@@ -135,6 +135,10 @@ fun formatReport(info: DeviceInfo, results: List<EngineCheckResult>): String {
         } else {
             sb.append("text: ").append(r.text).append('\n')
         }
+        if (r.diagnostics != null) {
+            sb.append("diagnostics:\n")
+            r.diagnostics.lineSequence().forEach { sb.append("  ").append(it).append('\n') }
+        }
     }
     return sb.toString()
 }

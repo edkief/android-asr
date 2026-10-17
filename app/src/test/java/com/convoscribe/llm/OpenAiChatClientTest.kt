@@ -7,6 +7,8 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -282,5 +284,58 @@ class OpenAiChatClientTest {
             }
         }
         assertEquals("rate limited", ex.message)
+    }
+
+    /**
+     * Regression: listModels ran its blocking call on the caller's
+     * thread, so Settings' "Test connection" (main thread) failed with
+     * NetworkOnMainThreadException. The request must run elsewhere.
+     */
+    @Test
+    fun listModels_runsTheRequestOffTheCallingThread() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+        var requestThread: String? = null
+        val recording = http.newBuilder()
+            .addInterceptor { chain ->
+                requestThread = Thread.currentThread().name
+                chain.proceed(chain.request())
+            }
+            .build()
+        val client = OpenAiChatClient(recording) {
+            LlmConfig(baseUrl = server.url("/v1").toString(), apiKey = "", model = "m")
+        }
+        val callerThread = Thread.currentThread().name
+
+        client.listModels()
+
+        assertNotNull(requestThread)
+        assertNotEquals(callerThread, requestThread)
+    }
+
+    @Test
+    fun listModels_unreachableServerNamesUrlAndException() = runBlocking {
+        val url = server.url("/v1").toString()
+        server.shutdown()
+        val client = OpenAiChatClient(http) { LlmConfig(baseUrl = url, apiKey = "", model = "m") }
+
+        val ex = assertThrows(LlmException::class.java) { runBlocking { client.listModels() } }
+
+        val message = ex.message!!
+        assertTrue(message, message.startsWith("Network error calling $url/models: "))
+        assertTrue(message, message.contains("ConnectException"))
+    }
+
+    @Test
+    fun listModels_nonJsonBodyRaisesUnexpectedResponse() = runBlocking {
+        server.enqueue(MockResponse().setBody("<html>Sign in</html>"))
+        val client = OpenAiChatClient(http) {
+            LlmConfig(baseUrl = server.url("/v1").toString(), apiKey = "", model = "m")
+        }
+
+        val ex = assertThrows(LlmException::class.java) { runBlocking { client.listModels() } }
+
+        val message = ex.message!!
+        assertTrue(message, message.startsWith("Unexpected response from "))
+        assertTrue(message, message.contains("<html>Sign in</html>"))
     }
 }

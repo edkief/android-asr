@@ -24,6 +24,10 @@ import com.convoscribe.asr.TranscriptEvent
  *   single space; blank when there were no finals.
  * @property error message of the exception that aborted the run,
  *   or `null` on a clean run.
+ * @property diagnostics multi-line troubleshooting dump (process
+ *   exit reason, DSP device-node access, native log lines) the NPU
+ *   probe attaches when its process died; `null` otherwise. Only
+ *   the copied / shared report prints it.
  */
 data class EngineCheckResult(
     val engine: String,
@@ -32,7 +36,8 @@ data class EngineCheckResult(
     val audioMs: Long,
     val processMs: Long,
     val text: String,
-    val error: String? = null
+    val error: String? = null,
+    val diagnostics: String? = null
 ) {
     /**
      * Real-time factor: `processMs / audioMs`. `0.0` when no audio

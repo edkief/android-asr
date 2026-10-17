@@ -63,6 +63,15 @@ class SessionRepository(
         return id
     }
 
+    override suspend fun sessionLanguage(sessionId: Long): String {
+        val row = sessionDao.get(sessionId) ?: error("No session row for id $sessionId")
+        return row.language
+    }
+
+    override suspend fun reopenSession(sessionId: Long) {
+        sessionDao.setStatus(sessionId, SessionStatus.RECORDING)
+    }
+
     /**
      * Append a transcript segment. Called by the ASR engine as
      * endpoints are detected. Returns the new segment id.
@@ -288,7 +297,7 @@ class SessionRepository(
                 SpeakerEntity(
                     sessionId = sessionId,
                     speakerIndex = i,
-                    label = labels[i] ?: "Speaker ${i + 1}"
+                    label = labels[i] ?: defaultSpeakerLabel(i)
                 )
             }
             if (rows.isNotEmpty()) {

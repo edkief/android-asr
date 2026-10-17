@@ -39,11 +39,44 @@ class SherpaTranscriberFactory(
      * each other through `dlopen`. The CPU engine never reads
      * this value.
      */
-    private val nativeLibraryDir: String
+    private val nativeLibraryDir: String,
+    /**
+     * Engine to build regardless of the user's Settings choice, or
+     * `null` to follow `settings.asrEngine`. Set through
+     * [withEngine] by the engine check, whose "Check NPU" / "Check
+     * CPU" buttons must test that exact engine.
+     */
+    private val engineOverride: String? = null,
+    /**
+     * Returns why the NPU must not be started in this process, or
+     * `null` when it may be. Backed by
+     * [com.convoscribe.enginecheck.NpuAvailability]: once the NPU
+     * probe has seen the QNN runtime kill its process, starting
+     * the NPU here would kill the whole app (sherpa-onnx calls
+     * `exit()` on a QNN init failure, so no exception reaches us),
+     * so [create] refuses with a hint to switch to the CPU engine.
+     */
+    private val npuBlockedReason: () -> String? = { null }
 ) : TranscriberFactory {
 
+    /**
+     * A copy of this factory pinned to [engine] (`"npu"` or
+     * `"cpu"`). The copy skips the [npuBlockedReason] guard: an
+     * explicit engine choice comes from the engine check, which
+     * must be able to retry the NPU (the NPU probe runs it in a
+     * separate process so a native exit cannot take the app down).
+     */
+    fun withEngine(engine: String): SherpaTranscriberFactory = SherpaTranscriberFactory(
+        store = store,
+        settings = settings,
+        nativeLibraryDir = nativeLibraryDir,
+        engineOverride = engine
+    )
+
+    private fun selectedEngine(): String = engineOverride ?: settings.settings.value.asrEngine
+
     override fun create(language: String): StreamingTranscriber {
-        val engine = settings.settings.value.asrEngine
+        val engine = selectedEngine()
         val bundle = ModelCatalog.asrFor(language, engine)
         val effective = ModelCatalog.effectiveEngine(language, engine)
         val asr = bundle.asr ?: error("ASR bundle ${bundle.id} has no AsrFiles")
@@ -59,6 +92,13 @@ class SherpaTranscriberFactory(
             // specific message and the call to switch to CPU in
             // Settings; we never silently fall back to the CPU
             // engine because the user chose NPU explicitly.
+            npuBlockedReason()?.let { reason ->
+                throw IllegalStateException(
+                    "The NPU engine is not available on this device ($reason). " +
+                        "You can switch to the CPU engine in Settings, or run " +
+                        "Check NPU again from Engine check."
+                )
+            }
             QnnRuntime.ensurePrepared(nativeLibraryDir)
             val backend = try {
                 SherpaRecognizerBackend(config = SherpaAsrConfigs.npu(modelDir, asr))
@@ -90,7 +130,7 @@ class SherpaTranscriberFactory(
      * first-run cost.
      */
     override fun needsPreparation(language: String): Boolean {
-        val engine = settings.settings.value.asrEngine
+        val engine = selectedEngine()
         val effective = ModelCatalog.effectiveEngine(language, engine)
         if (effective != "npu") return false
         val bundle = ModelCatalog.asrFor(language, engine)

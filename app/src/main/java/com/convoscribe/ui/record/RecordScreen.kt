@@ -59,10 +59,10 @@ import com.convoscribe.service.RecordingService
  * Top-level destination entered from the home FAB to record a fresh
  * session. Lifecycle:
  *
- *  1. on first composition the screen checks the `RECORD_AUDIO`
- *     runtime permission;
- *  2. the Start button launches the permission request the first
- *     time it is tapped and re-checks after the result comes back;
+ *  1. the Start button is always tappable while idle; without the
+ *     `RECORD_AUDIO` runtime permission it launches the system
+ *     permission dialog and starts recording once it is granted;
+ *  2. it re-checks the permission on every tap;
  *     a denial shows the "Microphone permission is required…"
  *     message and never reaches the service start call;
  *  3. once the permission is granted the Start button asks the
@@ -81,9 +81,13 @@ import com.convoscribe.service.RecordingService
  * @param navController navigation controller the screen pops back
  *   to the home screen from, and pushes the session-detail route
  *   to after a successful stop.
+ * @param resumeSessionId finished session to continue recording
+ *   into, or `null` for a new session. When set, Start appends to
+ *   that session and stopping pops back to its (already open)
+ *   session screen instead of pushing a new one.
  */
 @Composable
-fun RecordScreen(navController: NavHostController) {
+fun RecordScreen(navController: NavHostController, resumeSessionId: Long? = null) {
     val context = LocalContext.current
     val container = (context.applicationContext as ConvoApp).container
     val vm: RecordViewModel = viewModel(
@@ -95,35 +99,14 @@ fun RecordScreen(navController: NavHostController) {
     )
     val state by vm.state.collectAsStateWithLifecycle()
 
-    // Re-check after returning from Settings (where the user may
-    // have granted the permission). `rememberSaveable` keeps the
-    // denial message around process death so a transient blank
-    // does not make it vanish.
-    var micGranted by rememberSaveable {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
-        )
-    }
+    // `rememberSaveable` keeps the denial message around process
+    // death so a transient blank does not make it vanish.
     var micDeniedMessage by rememberSaveable { mutableStateOf<String?>(null) }
-
-    // Re-evaluate the permission whenever the screen is shown so
-    // returning from system Settings (or being recreated after a
-    // rotation) reflects the latest grant state.
-    LaunchedEffect(Unit) {
-        micGranted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-    }
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
         val micOk = result[Manifest.permission.RECORD_AUDIO] == true
-        micGranted = micOk
         micDeniedMessage = if (micOk) {
             null
         } else {
@@ -135,7 +118,7 @@ fun RecordScreen(navController: NavHostController) {
         if (micOk) {
             ContextCompat.startForegroundService(
                 context,
-                RecordingService.startIntent(context)
+                RecordingService.startIntent(context, resumeSessionId)
             )
         }
     }
@@ -146,8 +129,14 @@ fun RecordScreen(navController: NavHostController) {
     // the back stack.
     LaunchedEffect(state.lastCompletedSessionId) {
         val id = state.lastCompletedSessionId ?: return@LaunchedEffect
-        navController.navigate("session/$id") {
-            popUpTo("record") { inclusive = true }
+        if (resumeSessionId != null) {
+            // Continued from that session's screen, which is right
+            // below us on the back stack.
+            navController.popBackStack()
+        } else {
+            navController.navigate("session/$id") {
+                popUpTo("record") { inclusive = true }
+            }
         }
         vm.onNavigatedToSession()
     }
@@ -159,8 +148,8 @@ fun RecordScreen(navController: NavHostController) {
         finalLines = state.finalLines,
         partialText = state.partialText,
         error = state.error,
-        micGranted = micGranted,
         micDeniedMessage = micDeniedMessage,
+        continuing = resumeSessionId != null,
         onBack = { navController.popBackStack() },
         onStart = {
             // Defensive: re-check at click time, not just at
@@ -177,7 +166,7 @@ fun RecordScreen(navController: NavHostController) {
             }
             ContextCompat.startForegroundService(
                 context,
-                RecordingService.startIntent(context)
+                RecordingService.startIntent(context, resumeSessionId)
             )
         },
         onStop = {
@@ -193,10 +182,10 @@ fun RecordScreen(navController: NavHostController) {
 /**
  * Render-only variant of [RecordScreen] for preview / testing.
  *
- * @param micGranted whether `RECORD_AUDIO` is currently granted;
- *   controls the Start button's "first ask for permission" path.
  * @param micDeniedMessage shown between the elapsed time and the
  *   final transcript when the user denied the runtime permission.
+ * @param continuing `true` when appending to an existing session;
+ *   only changes the title.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -207,8 +196,8 @@ internal fun RecordBody(
     finalLines: List<String>,
     partialText: String,
     error: String?,
-    micGranted: Boolean,
     micDeniedMessage: String?,
+    continuing: Boolean = false,
     onBack: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit
@@ -216,7 +205,10 @@ internal fun RecordBody(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(text = stringResource(R.string.record_title)) },
+                title = {
+                    val titleRes = if (continuing) R.string.record_title_continue else R.string.record_title
+                    Text(text = stringResource(titleRes))
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -328,7 +320,9 @@ internal fun RecordBody(
             // path twice while the recognizer is being built; the
             // service already rejects concurrent starts but the
             // disabling here gives clearer visual feedback.
-            val showStart = phase == RecordingPhase.IDLE && micGranted
+            // Not gated on the mic permission: tapping Start is what
+            // asks for it.
+            val showStart = phase == RecordingPhase.IDLE
             val showStop = phase == RecordingPhase.RECORDING
             // The round FAB is large (96dp) but it's structured as
             // a `Button` (not `FloatingActionButton`) so its state

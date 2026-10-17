@@ -227,6 +227,30 @@ class SummaryViewModelTest {
         assertEquals("first", rows[0].content)
     }
 
+    /**
+     * Regression: non-LlmException failures were rethrown out of
+     * viewModelScope (crashing the app) instead of being shown.
+     */
+    @Test
+    fun summarise_unexpectedFailureIsShownNotThrown() = runTest(dispatcher) {
+        val id = repo.createSession(title = "demo", language = "en")
+        seedTranscript(id)
+        val settings = newSettings().also { configureSettings(it) }
+        val client = FakeChatClient(tokens = emptyList(), initialError = IllegalStateException("boom"))
+        val vm = SummaryViewModel(
+            sessionId = id,
+            repository = repo,
+            chatClient = client,
+            settings = settings
+        )
+
+        vm.summarise()
+        advanceUntilIdle()
+
+        val state = vm.state.first { it.error != null && !it.running }
+        assertEquals("IllegalStateException: boom", state.error)
+    }
+
     @Test
     fun summarise_emptyTranscriptSetsErrorAndNeverCallsClient() = runTest(dispatcher) {
         val id = repo.createSession(title = "demo", language = "en")

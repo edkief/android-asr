@@ -1,16 +1,18 @@
 package com.convoscribe.ui.session
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.convoscribe.TAG
 import com.convoscribe.data.ChatMessageEntity
 import com.convoscribe.data.MessageKind
 import com.convoscribe.data.MessageRole
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.data.TranscriptFormatter
 import com.convoscribe.llm.ChatClient
-import com.convoscribe.llm.LlmException
 import com.convoscribe.llm.LlmMessage
 import com.convoscribe.llm.PromptBuilder
+import com.convoscribe.llm.toUserMessage
 import com.convoscribe.settings.SettingsRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,9 +76,9 @@ data class AskUiState(
  *    [PromptBuilder.question].
  *  - On success an ASSISTANT row is appended, mirroring the
  *    streamed text verbatim.
- *  - On [LlmException] the USER row stays in the DB, no
- *    ASSISTANT row is saved and `error` is set to the
- *    exception's message verbatim.
+ *  - On any failure the USER row stays in the DB, no
+ *    ASSISTANT row is saved, the stack trace is logged and
+ *    `error` is set to [com.convoscribe.llm.toUserMessage].
  *  - [retryLast] resends the last USER message without saving a
  *    second USER row.
  *  - [clearHistory] deletes every QA message for the session.
@@ -106,7 +108,7 @@ class AskViewModel(
      * In-flight streaming job. Tracked so [retryLast] / future
      * cancellations can interrupt the streaming flow mid-answer.
      * `null` when nothing is running. The streaming flow's `catch`
-     * block does the same bookkeeping on a thrown [LlmException],
+     * block does the same bookkeeping on a failure,
      * so the field is always in sync with the UI.
      */
     private var job: Job? = null
@@ -148,7 +150,7 @@ class AskViewModel(
      * (after trimming) or when a previous run is still in flight.
      * The USER message is persisted **first**, then the streaming
      * flow is collected. On completion the ASSISTANT row is
-     * appended; on [LlmException] the error is surfaced and the
+     * appended; on a failure the error is surfaced and the
      * USER row stays in [state.messages] so [retryLast] can
      * resend it.
      */
@@ -197,15 +199,16 @@ class AskViewModel(
                         _state.value = _state.value.copy(streaming = accumulated.toString())
                     }
                     .catch { failure ->
-                        if (failure is LlmException) {
-                            _state.value = _state.value.copy(
-                                running = false,
-                                streaming = "",
-                                error = failure.message
-                            )
-                        } else {
-                            throw failure
-                        }
+                        // Cancellation ("Stop") is not an error. Any
+                        // other failure is shown, never rethrown: an
+                        // exception escaping viewModelScope crashes the app.
+                        if (failure is kotlinx.coroutines.CancellationException) throw failure
+                        Log.w(TAG, "ask: LLM request failed", failure)
+                        _state.value = _state.value.copy(
+                            running = false,
+                            streaming = "",
+                            error = failure.toUserMessage()
+                        )
                     }
                     .collect()
 
@@ -286,15 +289,16 @@ class AskViewModel(
                         _state.value = _state.value.copy(streaming = accumulated.toString())
                     }
                     .catch { failure ->
-                        if (failure is LlmException) {
-                            _state.value = _state.value.copy(
-                                running = false,
-                                streaming = "",
-                                error = failure.message
-                            )
-                        } else {
-                            throw failure
-                        }
+                        // Cancellation ("Stop") is not an error. Any
+                        // other failure is shown, never rethrown: an
+                        // exception escaping viewModelScope crashes the app.
+                        if (failure is kotlinx.coroutines.CancellationException) throw failure
+                        Log.w(TAG, "ask: LLM request failed", failure)
+                        _state.value = _state.value.copy(
+                            running = false,
+                            streaming = "",
+                            error = failure.toUserMessage()
+                        )
                     }
                     .collect()
 

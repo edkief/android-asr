@@ -423,4 +423,78 @@ class ModelDownloaderTest {
         assertEquals(archive.size.toLong(), lastProgress.bytesDone)
         assertEquals(archive.size.toLong(), lastProgress.bytesTotal)
     }
+
+    /**
+     * Regression: ticks used to carry the bytes since the previous
+     * tick while the flow added them to the pre-file total, so the UI
+     * sat at "0 / N MB" until each file finished. Progress must climb
+     * steadily through a file and through the next file.
+     */
+    @Test
+    fun plainFiles_progressClimbsThroughEachFile() = runTest {
+        val size = 1_000_000
+        val bodyA = ByteArray(size) { (it % 251).toByte() }
+        val bodyB = ByteArray(size) { ((it + 7) % 251).toByte() }
+        server.enqueue(MockResponse().setBody(Buffer().write(bodyA)))
+        server.enqueue(MockResponse().setBody(Buffer().write(bodyB)))
+        val bundle = ModelBundle(
+            id = "big",
+            displayName = "big",
+            kind = ModelKind.SEGMENTATION,
+            language = null,
+            files = listOf(
+                ModelFile("a.bin", server.url("/a.bin").toString(), size.toLong()),
+                ModelFile("b.bin", server.url("/b.bin").toString(), size.toLong())
+            )
+        )
+
+        val done = downloader.download(listOf(bundle)).toList()
+            .filterIsInstance<DownloadEvent.Progress>()
+            .map { it.bytesDone }
+
+        assertEquals("progress must never go backwards: $done", done.sorted(), done)
+        assertEquals(2L * size, done.last())
+        // Mid-way through the first file, and mid-way through the second.
+        assertTrue("no progress inside a.bin: $done", done.any { it in 300_000L until size.toLong() })
+        assertTrue("no progress inside b.bin: $done", done.any { it in (size + 300_000L) until 2L * size })
+    }
+
+    /**
+     * Regression: archive ticks were only emitted between tar entries,
+     * so a single large entry gave no progress until it was extracted.
+     * Uses 3 MB of incompressible bytes: bzip2 consumes input in
+     * ~900 KB blocks, so the entry spans several of them.
+     */
+    @Test
+    fun archiveWithOneLargeEntry_reportsProgressDuringExtraction() = runTest {
+        val random = java.util.Random(42)
+        val big = ByteArray(3_000_000).also { random.nextBytes(it) }
+        val archive = buildTarBz2(
+            rootDir = "root",
+            entries = listOf("root/encoder.onnx"),
+            payloads = listOf(big)
+        )
+        server.enqueue(MockResponse().setBody(Buffer().write(archive)))
+        val bundle = ModelBundle(
+            id = "npu",
+            displayName = "NPU model",
+            kind = ModelKind.ASR,
+            language = "en",
+            files = listOf(ModelFile("encoder.onnx", "", big.size.toLong())),
+            archive = ModelArchive(
+                url = server.url("/npu.tar.bz2").toString(),
+                sizeBytes = archive.size.toLong(),
+                rootDir = "root"
+            )
+        )
+
+        val done = downloader.download(listOf(bundle)).toList()
+            .filterIsInstance<DownloadEvent.Progress>()
+            .map { it.bytesDone }
+
+        val total = archive.size.toLong()
+        assertEquals("progress must never go backwards: $done", done.sorted(), done)
+        assertEquals(total, done.last())
+        assertTrue("expected several mid-extraction ticks: $done", done.count { it in 1L until total } >= 2)
+    }
 }

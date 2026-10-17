@@ -148,7 +148,7 @@ class DiarizeSessionUseCase(
                 SegmentSpan(id = segment.id, startMs = segment.startMs, endMs = segment.endMs)
             }
             val assignment = SpeakerAssigner.assign(spans, turns)
-            val labels = computeLabels(
+            val enrolledLabels = computeLabels(
                 sessionId = sessionId,
                 samples = samples,
                 turns = turns,
@@ -156,6 +156,14 @@ class DiarizeSessionUseCase(
                 speakerCount = assignment.speakerCount,
                 settings = speakerSettings
             )
+            // Names typed on an earlier diarization survive the re-run;
+            // a match against an enrolled voice still wins.
+            val carriedLabels = SpeakerLabelCarryOver.carry(
+                previousSegments = segments,
+                previousLabels = repository.getSpeakers(sessionId).associate { it.speakerIndex to it.label },
+                newAssignment = assignment.speakerBySegment
+            )
+            val labels = carriedLabels + enrolledLabels
             repository.applyDiarization(
                 sessionId = sessionId,
                 assignments = assignment.speakerBySegment,

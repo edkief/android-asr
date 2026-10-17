@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.job
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -86,10 +87,10 @@ class OpenAiChatClient(
      *
      * Throws [LlmException] for:
      *  - missing base URL or model (no HTTP request is issued);
-     *  - any non-2xx response (message is `"HTTP <code>: <body>"`,
-     *    body truncated to 300 chars);
+     *  - any non-2xx response (message is
+     *    `"HTTP <code> from <url>: <body>"`, body truncated to 300 chars);
      *  - I/O failures (`IOException` wrapped as
-     *    `"Network error: <message>"`).
+     *    `"Network error calling <url>: <exception chain>"`).
      */
     override fun stream(messages: List<LlmMessage>): Flow<String> = callbackFlow {
         val cfg = config()
@@ -151,10 +152,7 @@ class OpenAiChatClient(
                     val wrapped = if (e is CancellationException) {
                         e
                     } else {
-                        LlmException(
-                            "Network error: ${e.message ?: e.javaClass.simpleName}",
-                            cause = e
-                        )
+                        LlmException("Network error calling $url: ${describeFailure(e)}", cause = e)
                     }
                     close(wrapped)
                 }
@@ -164,12 +162,12 @@ class OpenAiChatClient(
                         if (!resp.isSuccessful) {
                             val code = resp.code
                             val bodyText = resp.body?.string().orEmpty().take(300)
-                            close(LlmException("HTTP $code: $bodyText", httpCode = code))
+                            close(LlmException("HTTP $code from $url: $bodyText", httpCode = code))
                             return
                         }
                         val source = resp.body?.source()
                         if (source == null) {
-                            close(LlmException("HTTP ${resp.code}: empty body", httpCode = resp.code))
+                            close(LlmException("HTTP ${resp.code} from $url: empty body", httpCode = resp.code))
                             return
                         }
                         try {
@@ -185,12 +183,7 @@ class OpenAiChatClient(
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: IOException) {
-                            close(
-                                LlmException(
-                                    "Network error: ${e.message ?: e.javaClass.simpleName}",
-                                    cause = e
-                                )
-                            )
+                            close(LlmException("Network error calling $url: ${describeFailure(e)}", cause = e))
                         } catch (e: LlmException) {
                             close(e)
                         }
@@ -206,10 +199,16 @@ class OpenAiChatClient(
 
     /**
      * GET `/v1/models` and return the `data[].id` list. The order
-     * is whatever the server returned. Throws [LlmException] with
-     * the same rules as [stream]: missing config / non-2xx / I/O.
+     * is whatever the server returned. Runs on [Dispatchers.IO]: the
+     * call blocks, and callers (the Settings "Test connection"
+     * button) invoke it from the main thread, where Android rejects
+     * network access with `NetworkOnMainThreadException`.
+     *
+     * Throws [LlmException] with the same rules as [stream] (missing
+     * config, non-2xx, I/O), plus a body that is not an
+     * OpenAI-style model list.
      */
-    override suspend fun listModels(): List<String> {
+    override suspend fun listModels(): List<String> = withContext(Dispatchers.IO) {
         val cfg = config()
         if (cfg.baseUrl.isBlank() || cfg.model.isBlank()) {
             throw LlmException("LLM endpoint is not configured")
@@ -226,19 +225,38 @@ class OpenAiChatClient(
             .get()
             .build()
 
-        val response = http.newCall(request).execute()
-        response.use { resp ->
-            if (!resp.isSuccessful) {
-                val code = resp.code
-                val bodyText = resp.body?.string().orEmpty().take(300)
-                throw LlmException("HTTP $code: $bodyText", httpCode = code)
+        try {
+            http.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val code = resp.code
+                    val bodyText = resp.body?.string().orEmpty().take(300)
+                    throw LlmException("HTTP $code from $url: $bodyText", httpCode = code)
+                }
+                parseModelIds(resp.body?.string().orEmpty(), url)
             }
-            val text = resp.body?.string().orEmpty()
-            val obj = Json.parseToJsonElement(text).jsonObject
-            val data = obj["data"]?.jsonArray ?: return emptyList()
-            return data.mapNotNull { element ->
-                element.jsonObject["id"]?.jsonPrimitive?.contentOrNull
-            }
+        } catch (e: IOException) {
+            throw LlmException("Network error calling $url: ${describeFailure(e)}", cause = e)
+        }
+    }
+
+    /**
+     * `data[].id` from a `/models` body. A body that is not JSON or
+     * not an object (an HTML login page from a proxy, a wrong base
+     * URL) becomes an [LlmException] quoting its start.
+     */
+    private fun parseModelIds(text: String, url: String): List<String> {
+        val data = try {
+            Json.parseToJsonElement(text).jsonObject["data"]?.jsonArray
+        } catch (e: IllegalArgumentException) {
+            // Covers kotlinx.serialization's SerializationException
+            // and the non-object `jsonObject` / `jsonArray` casts.
+            throw LlmException(
+                "Unexpected response from $url (not an OpenAI-style model list): ${text.take(200)}",
+                cause = e
+            )
+        } ?: return emptyList()
+        return data.mapNotNull { element ->
+            (element as? kotlinx.serialization.json.JsonObject)?.get("id")?.jsonPrimitive?.contentOrNull
         }
     }
 

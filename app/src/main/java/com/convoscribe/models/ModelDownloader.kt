@@ -107,10 +107,10 @@ class ModelDownloader(
                     archive = archive,
                     startBytesDone = bytesDone,
                     bytesTotal = bytesTotal,
-                    onTick = { delta, currentFile ->
+                    onTick = { bytesSoFar, currentFile ->
                         emit(
                             DownloadEvent.Progress(
-                                bytesDone = bytesDone + delta,
+                                bytesDone = bytesDone + bytesSoFar,
                                 bytesTotal = bytesTotal,
                                 currentFile = currentFile
                             )
@@ -139,10 +139,10 @@ class ModelDownloader(
                     file = file,
                     target = target,
                     startBytesDone = bytesDone,
-                    onTick = { delta, currentFile ->
+                    onTick = { bytesSoFar, currentFile ->
                         emit(
                             DownloadEvent.Progress(
-                                bytesDone = bytesDone + delta,
+                                bytesDone = bytesDone + bytesSoFar,
                                 bytesTotal = bytesTotal,
                                 currentFile = currentFile
                             )
@@ -166,15 +166,16 @@ class ModelDownloader(
 
     /**
      * Streams [file.url] into `<target>.part`, verifies the byte count,
-     * then renames it into place. [onTick] runs on the flow collector's
-     * coroutine, so it can [emit] [DownloadEvent.Progress]. Returns the
-     * new cumulative `bytesDone` for the caller.
+     * then renames it into place. [onTick] receives the bytes of this
+     * file written so far (not an increment) and runs on the flow
+     * collector's coroutine, so it can [emit] [DownloadEvent.Progress].
+     * Returns the new cumulative `bytesDone` for the caller.
      */
     private suspend fun downloadOne(
         file: ModelFile,
         target: File,
         startBytesDone: Long,
-        onTick: suspend (delta: Long, currentFile: String) -> Unit
+        onTick: suspend (bytesSoFar: Long, currentFile: String) -> Unit
     ): Long {
         val partFile = File(target.parentFile, target.name + ".part")
         target.parentFile?.mkdirs()
@@ -210,15 +211,14 @@ class ModelDownloader(
                             fileBytes += read
                             sinceLastTick += read
                             if (sinceLastTick >= TICK_BYTES) {
-                                onTick(sinceLastTick, file.fileName)
+                                onTick(fileBytes, file.fileName)
                                 sinceLastTick = 0L
                             }
                         }
-                        // Flush any sub-tick bytes so the running
-                        // total tracks the true file size after the loop.
+                        // Report the sub-tick tail so the running
+                        // total matches the true file size after the loop.
                         if (sinceLastTick > 0L) {
-                            onTick(sinceLastTick, file.fileName)
-                            sinceLastTick = 0L
+                            onTick(fileBytes, file.fileName)
                         }
                     }
                 }
@@ -258,6 +258,10 @@ class ModelDownloader(
      * missing entries. Already-installed archive bundles must not be
      * passed here — the caller short-circuits.
      *
+     * [onTick] receives the compressed bytes consumed so far (capped
+     * at [ModelArchive.sizeBytes]), every [TICK_BYTES], including while
+     * a large entry is being extracted.
+     *
      * Returns the new cumulative `bytesDone` for the caller; the
      * outer loop is expected to emit the trailing [DownloadEvent.Progress]
      * whose `bytesDone` equals `bytesTotal`.
@@ -267,7 +271,7 @@ class ModelDownloader(
         archive: ModelArchive,
         startBytesDone: Long,
         bytesTotal: Long,
-        onTick: suspend (delta: Long, currentFile: String) -> Unit
+        onTick: suspend (bytesSoFar: Long, currentFile: String) -> Unit
     ): Long {
         val response = try {
             client.newCall(Request.Builder().url(archive.url).build()).execute()
@@ -296,7 +300,7 @@ class ModelDownloader(
             // can be reported in compressed-bytes terms (matching the
             // declared `archive.sizeBytes`).
             var compressedRead = 0L
-            var tickBasis = 0L
+            var lastTicked = 0L
 
             val counting = object : FilterInputStream(body.byteStream()) {
                 override fun read(b: ByteArray, off: Int, len: Int): Int {
@@ -309,6 +313,15 @@ class ModelDownloader(
                     val b = super.read()
                     if (b >= 0) compressedRead += 1
                     return b
+                }
+            }
+
+            // Report compressed bytes consumed so far once at least
+            // TICK_BYTES have arrived since the previous report.
+            suspend fun tickIfDue(currentFile: String) {
+                if (compressedRead - lastTicked >= TICK_BYTES) {
+                    onTick(minOf(compressedRead, archive.sizeBytes), currentFile)
+                    lastTicked = compressedRead
                 }
             }
 
@@ -325,26 +338,22 @@ class ModelDownloader(
                         val rawName = entry.name
                         val stripped = stripArchivePrefix(rawName, archive.rootDir)
                         if (stripped == null || entry.isDirectory) {
-                            // Skipped entry; still emit any compressed
-                            // bytes we've accumulated since the last
-                            // tick while the bzip2 layer worked through
-                            // its headers / data.
-                            emitTickIfThreshold(
-                                compressedRead = compressedRead,
-                                tickBasis = tickBasis,
-                                threshold = TICK_BYTES,
-                                currentFile = bundle.id,
-                                onTick = onTick
-                            )?.let { tickBasis = it }
+                            // Skipped entry; still report the compressed
+                            // bytes the bzip2 layer consumed for it.
+                            tickIfDue(bundle.id)
                             continue
                         }
-                        val listed = listedByName[stripped] ?: continue
+                        val listed = listedByName[stripped]
+                        if (listed == null) {
+                            tickIfDue(bundle.id)
+                            continue
+                        }
                         val target = store.fileFor(bundle, stripped)
                         val partFile = File(target.parentFile, target.name + ".part")
                         target.parentFile?.mkdirs()
                         partFiles.add(partFile)
                         val expectedSize = listed.sizeBytes
-                        val entryBytes = writeTarEntry(tar, partFile)
+                        val entryBytes = writeTarEntry(tar, partFile) { tickIfDue(stripped) }
                         if (entryBytes != expectedSize) {
                             for (p in partFiles) p.delete()
                             throw ModelDownloadException(
@@ -359,13 +368,7 @@ class ModelDownloader(
                             )
                         }
                         writtenFiles.add(stripped)
-                        tickBasis = emitTickIfThreshold(
-                            compressedRead = compressedRead,
-                            tickBasis = tickBasis,
-                            threshold = TICK_BYTES,
-                            currentFile = stripped,
-                            onTick = onTick
-                        ) ?: tickBasis
+                        tickIfDue(stripped)
                     }
                 }
             } catch (e: IOException) {
@@ -390,54 +393,30 @@ class ModelDownloader(
                 }
             }
 
-            // Drain any remaining compressed bytes as a final tick so
-            // the absolute `bytesDone` reported via [onTick] tracks
-            // the archived bytes consumed in this call. The outer
-            // caller emits the trailing Progress event with
-            // bytesDone == bytesTotal == archive.sizeBytes.
-            val tail = compressedRead - tickBasis
-            if (tail > 0L) {
-                onTick(tail, bundle.id)
-            }
+            // The outer caller emits the trailing Progress event with
+            // bytesDone == startBytesDone + archive.sizeBytes, which
+            // covers any compressed bytes consumed since the last tick.
             return startBytesDone + archive.sizeBytes
         }
     }
 
     /**
-     * Emits [onTick] with the delta of compressed bytes accumulated
-     * since the previous tick when [threshold] is non-positive or
-     * the delta has reached [threshold]; returns the new basis (or
-     * `null` if nothing was emitted).
-     */
-    private suspend fun emitTickIfThreshold(
-        compressedRead: Long,
-        tickBasis: Long,
-        threshold: Long,
-        currentFile: String,
-        onTick: suspend (delta: Long, currentFile: String) -> Unit
-    ): Long? {
-        val delta = compressedRead - tickBasis
-        if (delta <= 0L) return null
-        if (threshold <= 0L || delta >= threshold) {
-            onTick(delta, currentFile)
-            return compressedRead
-        }
-        return null
-    }
-
-    /**
      * Reads the rest of [tar]'s current entry into [part] and returns
-     * the byte count written.
+     * the byte count written. [onChunk] runs after every buffer so
+     * progress keeps moving through a multi-hundred-MB entry, and the
+     * loop checks for cancellation for the same reason.
      */
-    private fun writeTarEntry(tar: TarArchiveInputStream, part: File): Long {
+    private suspend fun writeTarEntry(tar: TarArchiveInputStream, part: File, onChunk: suspend () -> Unit): Long {
         var bytes = 0L
         FileOutputStream(part).use { out ->
             val buffer = ByteArray(BUFFER_SIZE)
             while (true) {
+                currentCoroutineContext().ensureActive()
                 val read = tar.read(buffer)
                 if (read == -1) break
                 out.write(buffer, 0, read)
                 bytes += read
+                onChunk()
             }
         }
         return bytes

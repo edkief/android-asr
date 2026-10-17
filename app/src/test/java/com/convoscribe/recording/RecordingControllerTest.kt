@@ -69,6 +69,19 @@ class RecordingControllerTest {
         val segments: MutableList<Segment> = mutableListOf()
         val finishCalls: MutableList<Finish> = mutableListOf()
 
+        /** Language per existing session, for [sessionLanguage]. */
+        val languages: MutableMap<Long, String> = mutableMapOf()
+
+        /** Sessions passed to [reopenSession], in order. */
+        val reopenCalls: MutableList<Long> = mutableListOf()
+
+        override suspend fun sessionLanguage(sessionId: Long): String =
+            languages[sessionId] ?: error("unknown session $sessionId")
+
+        override suspend fun reopenSession(sessionId: Long) {
+            reopenCalls += sessionId
+        }
+
         override suspend fun createSession(title: String, language: String): Long {
             val id = nextId.incrementAndGet()
             // Match the production `SessionRepository`: a file at
@@ -161,8 +174,11 @@ class RecordingControllerTest {
     ) : TranscriberFactory {
         var createCount: Int = 0
             private set
+        var lastLanguage: String? = null
+            private set
         override fun create(language: String): StreamingTranscriber {
             createCount += 1
+            lastLanguage = language
             if (error != null) throw error
             return transcriber
         }
@@ -406,5 +422,63 @@ class RecordingControllerTest {
 
         h.controller.stop()
         advanceUntilIdle()
+    }
+
+    /**
+     * Write a finished session's WAV holding [ms] of silence, as a
+     * previous recording run would have left it.
+     */
+    private fun existingRecording(store: FakeRecordingStore, sessionId: Long, ms: Int, language: String): File {
+        val file = File(tmp.root, "$sessionId.wav")
+        com.convoscribe.audio.WavWriter(file).use { it.write(ShortArray(ms * 16)) }
+        store.languages[sessionId] = language
+        return file
+    }
+
+    @Test
+    fun start_resume_appendsAfterExistingAudioWithOffsetSegmentsAndSessionLanguage() = runTest {
+        val store = FakeRecordingStore(tmp.root)
+        val wav = existingRecording(store, sessionId = 7L, ms = 600, language = "fr")
+        val h = buildHarness(store = store)
+
+        h.controller.start(this, resumeSessionId = 7L)
+        advanceUntilIdle()
+
+        val state = h.controller.state.value
+        assertEquals(RecordingPhase.RECORDING, state.phase)
+        assertEquals(7L, state.sessionId)
+        assertEquals(600L, state.elapsedMs)
+        assertEquals(listOf(7L), store.reopenCalls)
+        // Settings say "en"; the session was recorded in French.
+        assertEquals("fr", h.factory.lastLanguage)
+
+        for (i in 0 until 3) h.audio.channel.trySend(silentChunk())
+        advanceUntilIdle()
+        assertEquals(900L, h.controller.state.value.elapsedMs)
+
+        h.controller.stop()
+        advanceUntilIdle()
+
+        // The transcriber reported 0..300 ms; stored after the old 600 ms.
+        assertEquals(listOf(FakeRecordingStore.Segment(7L, 600L, 900L, "line-3")), store.segments)
+        assertEquals(FakeRecordingStore.Finish(7L, 900L), store.finishCalls.last())
+        assertEquals(900L, com.convoscribe.audio.WavReader.readMono16k(wav).size / 16L)
+    }
+
+    @Test
+    fun start_resume_failureBeforeRecordingLeavesSessionUntouched() = runTest {
+        val store = FakeRecordingStore(tmp.root)
+        val wav = existingRecording(store, sessionId = 7L, ms = 600, language = "en")
+        val bytesBefore = wav.length()
+        val h = buildHarness(store = store, factoryError = IllegalStateException("model missing"))
+
+        h.controller.start(this, resumeSessionId = 7L)
+        advanceUntilIdle()
+
+        assertEquals(RecordingPhase.IDLE, h.controller.state.value.phase)
+        assertEquals("model missing", h.controller.state.value.error)
+        assertTrue(store.reopenCalls.isEmpty())
+        assertTrue(store.finishCalls.isEmpty())
+        assertEquals(bytesBefore, wav.length())
     }
 }
