@@ -215,6 +215,6 @@ class MediaPlayerAudioPlayer(private val scope: CoroutineScope) : AudioPlayer {
     }
 
     private companion object {
-        const val TICK_MS = 50L
+        const val TICK_MS = 200L
     }
 }

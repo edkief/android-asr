@@ -3,6 +3,7 @@ package com.convoscribe.ui.session
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.convoscribe.audio.FakeAudioPlayer
 import com.convoscribe.data.AppDatabase
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.data.SessionStatus
@@ -11,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -240,5 +242,138 @@ class SessionViewModelTest {
         vm.renameSession(title = "  Standup  ")
         val state = vm.uiState.first { it.title == "Standup" }
         assertEquals("Standup", state.title)
+    }
+
+    // ---- playback -------------------------------------------------
+
+    private suspend fun finishedSessionWithLines(): Long {
+        val id = repo.createSession(title = "play", language = "en")
+        repo.addSegment(sessionId = id, startMs = 1_000, endMs = 3_000, text = "First")
+        repo.addSegment(sessionId = id, startMs = 5_000, endMs = 7_000, text = "Second")
+        repo.finishRecording(id, durationMs = 8_000)
+        return id
+    }
+
+    private fun playbackVm(id: Long, player: FakeAudioPlayer) =
+        SessionViewModel(sessionId = id, repository = repo, playerFactory = { player })
+
+    @Test
+    fun playback_opensTheRecordingOnceTheSessionIsFinished() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val player = FakeAudioPlayer()
+        val vm = playbackVm(id, player)
+
+        vm.uiState.first { it.lines.size == 2 }
+        advanceUntilIdle()
+
+        assertEquals(listOf(File(repo.audioPath(id))), player.prepared)
+        assertTrue(vm.playerState.value.ready)
+    }
+
+    @Test
+    fun playback_isNotOpenedWhileTheSessionIsStillRecording() = runTest(dispatcher) {
+        val id = repo.createSession(title = "live", language = "en")
+        val player = FakeAudioPlayer()
+        val vm = playbackVm(id, player)
+
+        vm.uiState.first { it.title == "live" }
+        advanceUntilIdle()
+
+        assertTrue(player.prepared.isEmpty())
+        assertFalse(vm.playerState.value.ready)
+    }
+
+    @Test
+    fun tappingALine_seeksToItsStartAndPlays() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val player = FakeAudioPlayer()
+        val vm = playbackVm(id, player)
+        val lines = vm.uiState.first { it.lines.size == 2 }.lines
+        advanceUntilIdle()
+
+        vm.playLine(lines[1])
+
+        assertEquals(5_000L, vm.playerState.value.positionMs)
+        assertTrue(vm.playerState.value.isPlaying)
+    }
+
+    @Test
+    fun activeLine_followsThePlayerPosition() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val player = FakeAudioPlayer()
+        val vm = playbackVm(id, player)
+        val lines = vm.uiState.first { it.lines.size == 2 }.lines
+        advanceUntilIdle()
+        // Nothing has been played yet, so nothing is highlighted.
+        assertNull(vm.activeLineIndex.first())
+
+        vm.playLine(lines[0])
+        assertEquals(0, vm.activeLineIndex.first { it != null })
+
+        player.seekTo(5_500)
+        assertEquals(1, vm.activeLineIndex.first { it == 1 })
+    }
+
+    @Test
+    fun scrollingByHand_suspendsFollowUntilASeekOrTheFollowButton() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val vm = playbackVm(id, FakeAudioPlayer())
+        advanceUntilIdle()
+        assertTrue(vm.following.value)
+
+        vm.onUserScrolled()
+        assertFalse(vm.following.value)
+        vm.resumeFollow()
+        assertTrue(vm.following.value)
+
+        vm.onUserScrolled()
+        vm.seekTo(2_000)
+        assertTrue(vm.following.value)
+
+        vm.onUserScrolled()
+        vm.skip(10_000)
+        assertTrue(vm.following.value)
+    }
+
+    @Test
+    fun stopPlayback_pausesButKeepsThePosition() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val player = FakeAudioPlayer()
+        val vm = playbackVm(id, player)
+        advanceUntilIdle()
+        vm.seekTo(4_000)
+        vm.togglePlayback()
+        assertTrue(vm.playerState.value.isPlaying)
+
+        vm.stopPlayback()
+
+        assertFalse(vm.playerState.value.isPlaying)
+        assertEquals(4_000L, vm.playerState.value.positionMs)
+    }
+
+    @Test
+    fun cycleSpeed_goesThroughTheSpeedsAndWraps() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val vm = playbackVm(id, FakeAudioPlayer())
+        advanceUntilIdle()
+
+        vm.cycleSpeed()
+        assertEquals(1.5f, vm.playerState.value.speed)
+        vm.cycleSpeed()
+        assertEquals(2f, vm.playerState.value.speed)
+        vm.cycleSpeed()
+        assertEquals(1f, vm.playerState.value.speed)
+    }
+
+    @Test
+    fun playback_isNoopWithoutAPlayer() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val vm = SessionViewModel(sessionId = id, repository = repo)
+
+        vm.togglePlayback()
+        vm.seekTo(1_000)
+        vm.stopPlayback()
+
+        assertFalse(vm.playerState.value.ready)
     }
 }

@@ -17,6 +17,12 @@ object PlaybackSync {
 
     private val WORD = Regex("\\S+")
 
+    /** Playback speeds the speed button cycles through. */
+    val SPEEDS: List<Float> = listOf(1f, 1.5f, 2f)
+
+    /** Skip back / forward step of the player buttons. */
+    const val SKIP_MS: Long = 10_000L
+
     /**
      * Index of the line being spoken at [positionMs]: the last line
      * that has started. The line stays active through a pause until
@@ -73,4 +79,10 @@ object PlaybackSync {
 
     /** Where playback starts when [line] is tapped. */
     fun seekTargetMs(line: TranscriptLine): Long = line.startMs.coerceAtLeast(0L)
+
+    /** The speed after [current] in [SPEEDS], wrapping to the first. */
+    fun nextSpeed(current: Float): Float {
+        val index = SPEEDS.indexOf(current)
+        return SPEEDS[(index + 1) % SPEEDS.size]
+    }
 }

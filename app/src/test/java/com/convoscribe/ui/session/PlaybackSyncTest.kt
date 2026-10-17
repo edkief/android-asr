@@ -106,4 +106,13 @@ class PlaybackSyncTest {
         assertEquals(4_000L, PlaybackSync.seekTargetMs(lines[1]))
         assertEquals(0L, PlaybackSync.seekTargetMs(line(-5, 10, "x")))
     }
+
+    @Test
+    fun nextSpeed_cyclesAndWraps() {
+        assertEquals(1.5f, PlaybackSync.nextSpeed(1f))
+        assertEquals(2f, PlaybackSync.nextSpeed(1.5f))
+        assertEquals(1f, PlaybackSync.nextSpeed(2f))
+        // An unknown speed starts the cycle again at 1x.
+        assertEquals(1f, PlaybackSync.nextSpeed(0.75f))
+    }
 }
