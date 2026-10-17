@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -147,7 +148,8 @@ fun SpeakersScreen(navController: NavHostController) {
     // The delete confirmation dialog opens with a specific row id
     // and closes on Cancel/Delete. Kept local to the screen so the
     // ViewModel does not have to know about a dialog framework.
-    var pendingDelete by remember { mutableStateOf<EnrolledSpeakerEntity?>(null) }
+    // Name of the person whose removal awaits confirmation.
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
 
     SpeakersBody(
         speakers = state.speakers,
@@ -185,12 +187,12 @@ fun SpeakersScreen(navController: NavHostController) {
             title = { Text(text = stringResource(R.string.speakers_delete_title)) },
             text = {
                 Text(
-                    text = stringResource(R.string.speakers_delete_message, toDelete.name)
+                    text = stringResource(R.string.speakers_delete_message, toDelete)
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    vm.delete(toDelete.id)
+                    vm.deletePerson(toDelete)
                     pendingDelete = null
                 }) {
                     Text(text = stringResource(R.string.speakers_delete_confirm))
@@ -243,7 +245,7 @@ internal fun SpeakersBody(
     onEnrollNameChange: (String) -> Unit,
     onStartRecording: () -> Unit,
     onCancel: () -> Unit,
-    onRequestDelete: (EnrolledSpeakerEntity) -> Unit,
+    onRequestDelete: (String) -> Unit,
     onOpenSetup: () -> Unit
 ) {
     Scaffold(
@@ -374,8 +376,10 @@ internal fun SpeakersBody(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(speakers, key = { it.id }) { speaker ->
-                        EnrolledRow(speaker = speaker, onRequestDelete = onRequestDelete)
+                    // One row per person; each may have several voice samples.
+                    val people = speakers.groupBy { it.name }.toList()
+                    items(people, key = { it.first }) { (name, samples) ->
+                        EnrolledRow(name = name, sampleCount = samples.size, onRequestDelete = onRequestDelete)
                     }
                 }
             }
@@ -384,27 +388,33 @@ internal fun SpeakersBody(
 }
 
 /**
- * One row in the enrolled-speakers list. The name takes the
- * full width except for a trash icon on the right; tapping the
- * trash opens the confirm dialog owned by the screen.
+ * One row in the enrolled-speakers list: the person's name and how
+ * many voice samples they have, with a trash icon on the right that
+ * opens the confirm dialog owned by the screen (removing the person
+ * removes all their samples).
  */
 @Composable
-private fun EnrolledRow(speaker: EnrolledSpeakerEntity, onRequestDelete: (EnrolledSpeakerEntity) -> Unit) {
+private fun EnrolledRow(name: String, sampleCount: Int, onRequestDelete: (String) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            text = speaker.name,
-            style = MaterialTheme.typography.bodyLarge,
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .padding(end = 8.dp)
-        )
-        IconButton(onClick = { onRequestDelete(speaker) }) {
+        ) {
+            Text(text = name, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = pluralStringResource(R.plurals.speakers_sample_count, sampleCount, sampleCount),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = { onRequestDelete(name) }) {
             Icon(
                 imageVector = Icons.Filled.Delete,
-                contentDescription = stringResource(R.string.speakers_delete_cd, speaker.name)
+                contentDescription = stringResource(R.string.speakers_delete_cd, name)
             )
         }
     }

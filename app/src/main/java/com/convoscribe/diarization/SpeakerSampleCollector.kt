@@ -21,6 +21,13 @@ package com.convoscribe.diarization
  *     and CPU without raising recall. The default 30 000 ms
  *     (= 480 000 samples) is the documented sweet spot from
  *     the model card.
+ *  2b. **Clearest audio first.** Each speaker's budget is filled
+ *     from that speaker's highest-confidence turns first (see
+ *     [SpeakerTurn.confidence]), so the matching embedding is built
+ *     from the stretches the clustering was surest about rather
+ *     than whatever came first. Turns without a real confidence keep
+ *     their recording order, so behaviour is unchanged when the
+ *     engine reports none.
  *  3. **Drop speakers under `MIN_COLLECTED_MS`.** A speaker
  *     who owns less than 2 000 ms of usable audio across all
  *     kept turns has nothing an embedding model can latch
@@ -97,7 +104,7 @@ object SpeakerSampleCollector {
         // Map of speaker → ArrayList<FloatArray> of kept windows;
         // we concatenate at the end so a single speaker that
         // owns several non-adjacent turns sees exactly the audio
-        // they spoke, in the order they spoke it. We use a
+        // they spoke, clearest turns first. We use a
         // [LinkedHashMap] so the result preserves the order the
         // speakers are first introduced in the turn list — the
         // embedding pass doesn't care about order, but tests
@@ -109,7 +116,10 @@ object SpeakerSampleCollector {
         // equivalent to one 30-s turn).
         val totals = HashMap<Int, Int>()
 
-        for (turn in turns) {
+        // Stable sort: highest confidence first; placeholders last, in
+        // recording order.
+        val byConfidence = turns.sortedByDescending { if (it.hasConfidence) it.confidence else -1f }
+        for (turn in byConfidence) {
             val speaker = speakerMap(turn.speaker) ?: continue
             // (1) Drop very short turns — half a second doesn't
             // contribute enough speech to be worth embedding.

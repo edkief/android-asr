@@ -36,6 +36,13 @@ interface EnrolledSpeakerDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(entity: EnrolledSpeakerEntity): Long
 
+    /** Keep only the [keep] newest voice samples stored under [name]. */
+    @Query(
+        "DELETE FROM enrolled_speakers WHERE name = :name AND id NOT IN " +
+            "(SELECT id FROM enrolled_speakers WHERE name = :name ORDER BY createdAt DESC, id DESC LIMIT :keep)"
+    )
+    suspend fun pruneName(name: String, keep: Int)
+
     /** Remove every voice sample stored under [name]. */
     @Query("DELETE FROM enrolled_speakers WHERE name = :name")
     suspend fun deleteByName(name: String)

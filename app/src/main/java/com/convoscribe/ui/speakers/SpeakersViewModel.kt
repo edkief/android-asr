@@ -273,6 +273,17 @@ class SpeakersViewModel(
         }
     }
 
+    /**
+     * Remove the enrolled person [name]: every voice sample stored
+     * under that name.
+     */
+    fun deletePerson(name: String) {
+        val ids = _state.value.speakers.filter { it.name == name }.map { it.id }
+        viewModelScope.launch {
+            ids.forEach { repo.delete(it) }
+        }
+    }
+
     private companion object {
         /**
          * How long the enrollment recording runs in milliseconds.

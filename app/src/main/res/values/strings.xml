@@ -168,7 +168,11 @@
     <string name="settings_speakers_known_button">Manage</string>
     <string name="speakers_title">Known speakers</string>
     <string name="speakers_back">Back</string>
-    <string name="speakers_explanation">Record about 15 seconds of one person speaking normally. ConvoScribe will then recognise their voice in new recordings.</string>
+    <string name="speakers_explanation">Record about 15 seconds of one person speaking normally. ConvoScribe will then recognise their voice in new recordings. Recording the same name again adds another sample, which helps in different rooms.</string>
+    <plurals name="speakers_sample_count">
+        <item quantity="one">%d voice sample</item>
+        <item quantity="other">%d voice samples</item>
+    </plurals>
     <string name="speakers_name_label">Speaker name</string>
     <string name="speakers_record">Record sample</string>
     <string name="speakers_cancel">Cancel</string>

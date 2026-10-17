@@ -80,7 +80,7 @@ class EnrolledSpeakerRepositoryTest {
     }
 
     @Test
-    fun savingSameNameTwiceKeepsOneRowWithNewerEmbedding() = runTest {
+    fun savingSameNameTwiceKeepsBothVoiceSamples() = runTest {
         val first = floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f)
         val second = floatArrayOf(0.9f, 0.8f, 0.7f, 0.6f)
 
@@ -88,14 +88,30 @@ class EnrolledSpeakerRepositoryTest {
         repo.save(name = "Alice", embedding = second)
 
         val rows = db.enrolledSpeakerDao().getAll()
+        assertEquals(listOf("Alice", "Alice"), rows.map { it.name })
         assertEquals(
-            "saving the same name twice must keep exactly one row",
-            1,
-            rows.size
+            setOf(first.toList(), second.toList()),
+            rows.map { it.embedding.toFloats().toList() }.toSet()
         )
-        // The newer embedding must have overwritten the older
-        // one — this is the whole point of the REPLACE strategy.
-        assertEquals(second.toList(), rows[0].embedding.toFloats().toList())
+    }
+
+    @Test
+    fun onlyTheNewestSamplesPerPersonAreKept() = runTest {
+        for (i in 1..MAX_SAMPLES_PER_PERSON + 2) {
+            repo.save(name = "Alice", embedding = floatArrayOf(i.toFloat()))
+        }
+        repo.save(name = "Bob", embedding = floatArrayOf(-1f))
+
+        val alice = db.enrolledSpeakerDao().getAll().filter { it.name == "Alice" }
+        assertEquals(MAX_SAMPLES_PER_PERSON, alice.size)
+        // Samples 1 and 2 (the oldest) were dropped.
+        assertEquals(
+            (3..MAX_SAMPLES_PER_PERSON + 2).map {
+                it.toFloat()
+            }.toSet(),
+            alice.map { it.embedding.toFloats()[0] }.toSet()
+        )
+        assertEquals(1, db.enrolledSpeakerDao().getAll().count { it.name == "Bob" })
     }
 
     @Test
@@ -111,18 +127,10 @@ class EnrolledSpeakerRepositoryTest {
             assertEquals(1, afterFirst.size)
             assertEquals("Alice", afterFirst[0].name)
 
-            // Replace it with a same-name save (Bob → updated
-            // Bob) — same row id, same count, refreshed
-            // embedding. REPLACE on the unique index keeps the
-            // row count at 1.
+            // A second sample for the same person is a second row.
             repo.save(name = "Alice", embedding = floatArrayOf(0f, 1f))
             val afterSecond = awaitItem()
-            assertEquals(1, afterSecond.size)
-            assertEquals("Alice", afterSecond[0].name)
-            assertEquals(
-                floatArrayOf(0f, 1f).toList(),
-                afterSecond[0].embedding.toFloats().toList()
-            )
+            assertEquals(listOf("Alice", "Alice"), afterSecond.map { it.name })
 
             cancelAndIgnoreRemainingEvents()
         }

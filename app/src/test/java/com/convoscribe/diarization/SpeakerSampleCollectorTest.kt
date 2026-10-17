@@ -300,4 +300,33 @@ class SpeakerSampleCollectorTest {
         assertEquals(listOf(3, 0, 7), collected.keys.toList())
         assertFalse(collected.isEmpty())
     }
+
+    /** With a budget for one turn, the speaker's most confident turn is the one used. */
+    @Test
+    fun collect_fillsTheBudgetFromTheMostConfidentTurnsFirst() {
+        // 6 s of audio: value 0.1 in the first 3 s, 0.9 in the last 3 s.
+        val samples = FloatArray(96_000) { i -> if (i < 48_000) 0.1f else 0.9f }
+        val turns = listOf(
+            SpeakerTurn(0, 3_000, speaker = 5, confidence = 0.4f),
+            SpeakerTurn(3_000, 6_000, speaker = 5, confidence = 0.95f)
+        )
+
+        val out = SpeakerSampleCollector.collect(samples, turns, speakerMap = { 0 }, maxMs = 3_000L)
+
+        assertTrue(out.getValue(0).all { it == 0.9f })
+    }
+
+    /** Placeholder confidences (sherpa's -2) leave the recording order alone. */
+    @Test
+    fun collect_withPlaceholderConfidences_keepsRecordingOrder() {
+        val samples = FloatArray(96_000) { i -> if (i < 48_000) 0.1f else 0.9f }
+        val turns = listOf(
+            SpeakerTurn(0, 3_000, speaker = 5, confidence = -2f),
+            SpeakerTurn(3_000, 6_000, speaker = 5, confidence = -2f)
+        )
+
+        val out = SpeakerSampleCollector.collect(samples, turns, speakerMap = { 0 }, maxMs = 3_000L)
+
+        assertTrue(out.getValue(0).all { it == 0.1f })
+    }
 }
