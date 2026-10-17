@@ -225,8 +225,9 @@ fun SpeakersScreen(navController: NavHostController) {
  *   (kept verbatim — the screen does not translate the engine's
  *   exception messages).
  * @param micGranted state of the `RECORD_AUDIO` runtime
- *   permission. When `false`, tapping Start launches the
- *   permission request instead of calling the ViewModel.
+ *   permission. When `false`, a hint is shown under the Record
+ *   button; tapping Record then launches the permission request
+ *   instead of calling the ViewModel.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -295,9 +296,10 @@ internal fun SpeakersBody(
             when (phase) {
                 EnrollmentPhase.IDLE -> {
                     if (embeddingModelInstalled) {
+                        // Not gated on the mic permission: tapping
+                        // Record is what asks for it.
                         Button(
                             onClick = onStartRecording,
-                            enabled = micGranted,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(text = stringResource(R.string.speakers_record))
