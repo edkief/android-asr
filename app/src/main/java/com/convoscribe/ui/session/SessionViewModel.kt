@@ -1,9 +1,12 @@
 package com.convoscribe.ui.session
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.convoscribe.audio.AudioExporter
 import com.convoscribe.audio.AudioPlayer
 import com.convoscribe.audio.PlayerState
+import com.convoscribe.data.SessionEntity
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.data.SessionStatus
 import com.convoscribe.data.SpeakerEntity
@@ -11,8 +14,10 @@ import com.convoscribe.data.TranscriptFormatter
 import com.convoscribe.data.TranscriptLine
 import com.convoscribe.diarization.EnrollFromSessionUseCase
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +63,14 @@ data class SessionUiState(
     val audioPath: String = ""
 )
 
+/** State of an audio export (share or save); the screen shows a progress dialog while encoding. */
+sealed interface ExportState {
+    data object Idle : ExportState
+
+    /** The recording is being encoded to M4A; [progress] is `0f..1f`. */
+    data class Encoding(val progress: Float) : ExportState
+}
+
 /**
  * ViewModel for the session-detail screen. Exposes a single
  * [SessionUiState] `StateFlow` built by `combine`-ing
@@ -88,14 +101,17 @@ data class SessionUiState(
  * ViewModel owns an [AudioPlayer] for the session's recording. It
  * opens the file once the session is no longer `RECORDING`,
  * exposes [playerState], [activeLineIndex] and [following], and
- * releases the player in [onCleared].
+ * releases the player in [onCleared]. With an [audioExporter] it
+ * also encodes the recording to M4A for [shareAudio] / [saveAudio],
+ * reporting [exportState] and cancellable with [cancelExport].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionViewModel(
     private val sessionId: Long,
     private val repository: SessionRepository,
     private val enrollFromSession: EnrollFromSessionUseCase? = null,
-    playerFactory: ((CoroutineScope) -> AudioPlayer)? = null
+    playerFactory: ((CoroutineScope) -> AudioPlayer)? = null,
+    private val audioExporter: AudioExporter? = null
 ) : ViewModel() {
 
     val uiState: StateFlow<SessionUiState> = repository.observeSession(sessionId)
@@ -300,6 +316,57 @@ class SessionViewModel(
     /** The "Follow" button: scroll back to the playing line and keep following. */
     fun resumeFollow() {
         _following.value = true
+    }
+
+    private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
+
+    /** Progress of the running audio export, or [ExportState.Idle]. */
+    val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
+
+    private val shareAudioChannel = Channel<File>(Channel.BUFFERED)
+
+    /** One-shot: an M4A is ready to hand to the system share sheet. */
+    val shareAudioFiles: Flow<File> = shareAudioChannel.receiveAsFlow()
+
+    private var exportJob: Job? = null
+
+    /** Encode the recording to M4A and emit it on [shareAudioFiles]. */
+    fun shareAudio() = export { exporter, session, wav ->
+        shareAudioChannel.trySend(exporter.export(sessionId, session.title, wav, ::reportProgress))
+    }
+
+    /** Encode the recording to M4A and write it to the document the user picked at [target]. */
+    fun saveAudio(target: Uri) = export { exporter, session, wav ->
+        exporter.saveTo(target, sessionId, session.title, wav, ::reportProgress)
+        _snackbar.trySend("Audio saved")
+    }
+
+    /** Abort the running export; nothing is shared or saved. */
+    fun cancelExport() {
+        exportJob?.cancel()
+    }
+
+    private fun reportProgress(progress: Float) {
+        _exportState.value = ExportState.Encoding(progress)
+    }
+
+    private fun export(block: suspend (AudioExporter, SessionEntity, File) -> Unit) {
+        val exporter = audioExporter ?: return
+        if (exportJob?.isActive == true) return
+        exportJob = viewModelScope.launch {
+            _exportState.value = ExportState.Encoding(0f)
+            try {
+                val session = repository.getSession(sessionId)
+                if (session == null || session.audioPath.isBlank()) return@launch
+                block(exporter, session, File(session.audioPath))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbar.trySend("Could not export the audio: ${e.message ?: e.javaClass.simpleName}")
+            } finally {
+                _exportState.value = ExportState.Idle
+            }
+        }
     }
 
     override fun onCleared() {

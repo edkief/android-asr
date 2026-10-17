@@ -3,6 +3,7 @@ package com.convoscribe.ui.session
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.convoscribe.audio.AudioExporter
 import com.convoscribe.audio.FakeAudioPlayer
 import com.convoscribe.data.AppDatabase
 import com.convoscribe.data.SessionRepository
@@ -375,5 +376,81 @@ class SessionViewModelTest {
         vm.stopPlayback()
 
         assertFalse(vm.playerState.value.ready)
+    }
+
+    // ---- audio export ---------------------------------------------
+
+    private fun exportVm(id: Long, encode: (File, File, (Float) -> Unit, () -> Unit) -> Unit) = SessionViewModel(
+        sessionId = id,
+        repository = repo,
+        audioExporter = AudioExporter(
+            exportDir = File(recordingsDir, "exports"),
+            encode = encode,
+            openOutput = { java.io.ByteArrayOutputStream() }
+        )
+    )
+
+    @Test
+    fun shareAudio_emitsTheEncodedFileAndEndsIdle() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val vm = exportVm(id) { _, out, onProgress, _ ->
+            onProgress(0.5f)
+            out.writeText("m4a")
+        }
+
+        vm.shareAudio()
+        val file = vm.shareAudioFiles.first()
+
+        assertEquals("m4a", file.readText())
+        assertTrue(file.name.endsWith(".m4a"))
+        advanceUntilIdle()
+        assertEquals(ExportState.Idle, vm.exportState.value)
+    }
+
+    @Test
+    fun saveAudio_writesToTheChosenLocationAndSaysSo() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val vm = exportVm(id) { _, out, _, _ -> out.writeText("m4a") }
+
+        vm.saveAudio(android.net.Uri.parse("content://documents/x.m4a"))
+
+        assertEquals("Audio saved", vm.snackbar.first())
+        advanceUntilIdle()
+        assertEquals(ExportState.Idle, vm.exportState.value)
+    }
+
+    @Test
+    fun cancelExport_stopsEncodingAndSharesNothing() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val started = java.util.concurrent.CountDownLatch(1)
+        val vm = exportVm(id) { _, _, _, checkCancelled ->
+            started.countDown()
+            while (true) {
+                Thread.sleep(5)
+                checkCancelled()
+            }
+        }
+
+        vm.shareAudio()
+        kotlinx.coroutines.withContext(Dispatchers.IO) { started.await() }
+        assertTrue(vm.exportState.value is ExportState.Encoding)
+        vm.cancelExport()
+        advanceUntilIdle()
+        // The job ends on the IO thread; wait for it to report back.
+        vm.exportState.first { it == ExportState.Idle }
+
+        assertEquals(ExportState.Idle, vm.exportState.value)
+    }
+
+    @Test
+    fun exportFailure_isReportedOnTheSnackbar() = runTest(dispatcher) {
+        val id = finishedSessionWithLines()
+        val vm = exportVm(id) { _, _, _, _ -> throw java.io.IOException("disk full") }
+
+        vm.shareAudio()
+
+        assertEquals("Could not export the audio: disk full", vm.snackbar.first())
+        advanceUntilIdle()
+        assertEquals(ExportState.Idle, vm.exportState.value)
     }
 }

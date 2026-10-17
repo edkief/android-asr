@@ -1,6 +1,9 @@
 package com.convoscribe.ui.session
 
+import android.content.ClipData
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.DragInteraction
@@ -89,6 +92,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -98,6 +102,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import com.convoscribe.ConvoApp
 import com.convoscribe.R
+import com.convoscribe.audio.AudioExporter
 import com.convoscribe.audio.MediaPlayerAudioPlayer
 import com.convoscribe.audio.PlayerState
 import com.convoscribe.data.ChatMessageEntity
@@ -169,7 +174,8 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
                     sessionId = sessionId,
                     repository = container.sessionRepository,
                     enrollFromSession = container.enrollFromSessionUseCase,
-                    playerFactory = { scope -> MediaPlayerAudioPlayer(scope) }
+                    playerFactory = { scope -> MediaPlayerAudioPlayer(scope) },
+                    audioExporter = container.audioExporter
                 )
             }
         }
@@ -204,6 +210,25 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
     val playerState by vm.playerState.collectAsStateWithLifecycle()
     val activeLineIndex by vm.activeLineIndex.collectAsStateWithLifecycle()
     val following by vm.following.collectAsStateWithLifecycle()
+    val exportState by vm.exportState.collectAsStateWithLifecycle()
+    val saveAudioLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("audio/mp4")
+    ) { uri -> if (uri != null) vm.saveAudio(uri) }
+    LaunchedEffect(vm) {
+        // An M4A is ready: hand it to the share sheet through the
+        // FileProvider, with a one-off read grant for the receiving app.
+        vm.shareAudioFiles.collect { file ->
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "audio/mp4"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, state.title)
+                clipData = ClipData.newRawUri(file.name, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(send, context.getString(R.string.session_share_audio_chooser)))
+        }
+    }
     // Playback ends when the user leaves the screen or the app goes to
     // the background (there is no background playback).
     DisposableEffect(vm) { onDispose { vm.stopPlayback() } }
@@ -238,6 +263,10 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
         playerState = playerState,
         activeLineIndex = activeLineIndex,
         following = following,
+        exportState = exportState,
+        onShareAudio = { vm.shareAudio() },
+        onSaveAudio = { saveAudioLauncher.launch(AudioExporter.fileName(state.title)) },
+        onCancelExport = { vm.cancelExport() },
         playback = PlaybackActions(
             onTogglePlay = { vm.togglePlayback() },
             onSeek = { vm.seekTo(it) },
@@ -316,6 +345,10 @@ internal fun SessionBody(
     playerState: PlayerState,
     activeLineIndex: Int?,
     following: Boolean,
+    exportState: ExportState,
+    onShareAudio: () -> Unit,
+    onSaveAudio: () -> Unit,
+    onCancelExport: () -> Unit,
     playback: PlaybackActions,
     snackbarHostState: SnackbarHostState,
     canContinueRecording: Boolean,
@@ -395,6 +428,23 @@ internal fun SessionBody(
                             onClick = {
                                 overflowExpanded = false
                                 renameSessionOpen = true
+                            }
+                        )
+                        val hasAudio = status != SessionStatus.RECORDING && playerState.ready
+                        DropdownMenuItem(
+                            text = { Text(text = stringResource(R.string.session_overflow_share_audio)) },
+                            enabled = hasAudio,
+                            onClick = {
+                                overflowExpanded = false
+                                onShareAudio()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(text = stringResource(R.string.session_overflow_save_audio)) },
+                            enabled = hasAudio,
+                            onClick = {
+                                overflowExpanded = false
+                                onSaveAudio()
                             }
                         )
                         val canDiarize = status != SessionStatus.DIARIZING && status != SessionStatus.RECORDING
@@ -478,6 +528,28 @@ internal fun SessionBody(
         }
     }
 
+    if (exportState is ExportState.Encoding) {
+        // Not dismissable by tapping outside: encoding a long session
+        // takes a while, and Cancel is the explicit way out.
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(text = stringResource(R.string.session_export_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(text = stringResource(R.string.session_export_message))
+                    LinearProgressIndicator(
+                        progress = { exportState.progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onCancelExport) {
+                    Text(text = stringResource(R.string.session_export_cancel))
+                }
+            }
+        )
+    }
     // Rename-a-speaker dialog. `renameSpeakerIndex == null`
     // means the dialog is closed. We snapshot the speaker at
     // open-time so cancelling and re-opening starts fresh.
