@@ -61,6 +61,7 @@ class SettingsRepository(
             putInt(KEY_NUM_THREADS, next.numThreads)
             putInt(KEY_NUM_SPEAKERS, next.numSpeakers)
             putFloat(KEY_CLUSTER_THRESHOLD, next.clusterThreshold)
+            putBoolean(KEY_CLUSTER_THRESHOLD_TUNED, true)
             putFloat(KEY_SPEAKER_MATCH_THRESHOLD, next.speakerMatchThreshold)
         }.apply()
         _settings.value = next
@@ -94,7 +95,7 @@ class SettingsRepository(
             asrEngine = prefs.getString(KEY_ASR_ENGINE, null) ?: "",
             numThreads = prefs.getInt(KEY_NUM_THREADS, 4),
             numSpeakers = prefs.getInt(KEY_NUM_SPEAKERS, -1),
-            clusterThreshold = prefs.getFloat(KEY_CLUSTER_THRESHOLD, 0.5f),
+            clusterThreshold = loadClusterThreshold(),
             speakerMatchThreshold = prefs.getFloat(KEY_SPEAKER_MATCH_THRESHOLD, 0.5f)
         )
         // On load we don't have a "previous" value; if the persisted
@@ -113,7 +114,29 @@ class SettingsRepository(
         )
     }
 
+    /**
+     * Installs from before the threshold was tuned stored the old
+     * default (0.5) on every save, whether or not the user touched
+     * the slider. Treat that value as "default" once, so they move to
+     * [DEFAULT_CLUSTER_THRESHOLD]; any other stored value, and any
+     * value saved since (which sets [KEY_CLUSTER_THRESHOLD_TUNED]),
+     * is the user's.
+     */
+    private fun loadClusterThreshold(): Float {
+        val stored = prefs.getFloat(KEY_CLUSTER_THRESHOLD, DEFAULT_CLUSTER_THRESHOLD)
+        val legacyDefault = !prefs.getBoolean(KEY_CLUSTER_THRESHOLD_TUNED, false) && stored == LEGACY_CLUSTER_THRESHOLD
+        return if (legacyDefault) DEFAULT_CLUSTER_THRESHOLD else stored
+    }
+
     internal companion object {
+        /**
+         * Default clustering threshold. 0.75 had the best purity/coverage
+         * F1 (with 0.70) over 4 AMI meetings and 12 synthetic 2-4 speaker
+         * conversations, and half the speaker over-count of 0.70; 0.5
+         * found 2-4x too many speakers.
+         */
+        const val DEFAULT_CLUSTER_THRESHOLD = 0.75f
+        private const val LEGACY_CLUSTER_THRESHOLD = 0.5f
         const val KEY_LLM_BASE_URL = "llmBaseUrl"
         const val KEY_LLM_MODEL = "llmModel"
         const val KEY_MAX_TRANSCRIPT_CHARS = "maxTranscriptChars"
@@ -123,6 +146,7 @@ class SettingsRepository(
         const val KEY_NUM_THREADS = "numThreads"
         const val KEY_NUM_SPEAKERS = "numSpeakers"
         const val KEY_CLUSTER_THRESHOLD = "clusterThreshold"
+        const val KEY_CLUSTER_THRESHOLD_TUNED = "clusterThresholdTuned"
         const val KEY_SPEAKER_MATCH_THRESHOLD = "speakerMatchThreshold"
     }
 }

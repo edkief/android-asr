@@ -15,6 +15,9 @@ package com.convoscribe.settings
  * or NPU once the engine check has seen it work, see
  * [com.convoscribe.enginecheck.NpuAvailability]).
  *
+ * [clusterThreshold] defaults to the value chosen with
+ * `scripts/eval/eval_speakers.py --bench` (see its README).
+ *
  * Field defaults match a fresh install on first launch; values are
  * written to a `SharedPreferences` file by [SettingsRepository] and
  * reloaded on construction.
@@ -28,6 +31,6 @@ data class AppSettings(
     val asrEngineChosen: Boolean = false,
     val numThreads: Int = 4,
     val numSpeakers: Int = -1,
-    val clusterThreshold: Float = 0.5f,
+    val clusterThreshold: Float = SettingsRepository.DEFAULT_CLUSTER_THRESHOLD,
     val speakerMatchThreshold: Float = 0.5f
 )

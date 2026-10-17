@@ -49,7 +49,7 @@ class SettingsRepositoryTest {
         assertFalse(s.asrEngineChosen)
         assertEquals(4, s.numThreads)
         assertEquals(-1, s.numSpeakers)
-        assertEquals(0.5f, s.clusterThreshold, 0.0001f)
+        assertEquals(SettingsRepository.DEFAULT_CLUSTER_THRESHOLD, s.clusterThreshold, 0.0001f)
         assertEquals(0.5f, s.speakerMatchThreshold, 0.0001f)
     }
 
@@ -264,5 +264,28 @@ class SettingsRepositoryTest {
         val repo = SettingsRepository(prefs, secrets) { "cpu" }
         assertEquals("npu", repo.settings.value.asrEngine)
         assertTrue(repo.settings.value.asrEngineChosen)
+    }
+
+    @Test
+    fun clusterThreshold_legacyStoredDefaultMovesToTheTunedDefault() {
+        // Saved by a build from before the threshold was tuned.
+        prefs.edit().putFloat(SettingsRepository.KEY_CLUSTER_THRESHOLD, 0.5f).commit()
+        assertEquals(
+            SettingsRepository.DEFAULT_CLUSTER_THRESHOLD,
+            newRepository().settings.value.clusterThreshold,
+            0.0001f
+        )
+    }
+
+    @Test
+    fun clusterThreshold_legacyStoredCustomValueIsKept() {
+        prefs.edit().putFloat(SettingsRepository.KEY_CLUSTER_THRESHOLD, 0.6f).commit()
+        assertEquals(0.6f, newRepository().settings.value.clusterThreshold, 0.0001f)
+    }
+
+    @Test
+    fun clusterThreshold_halfChosenAfterTheChangeIsKept() {
+        newRepository().update { it.copy(clusterThreshold = 0.5f) }
+        assertEquals(0.5f, newRepository().settings.value.clusterThreshold, 0.0001f)
     }
 }

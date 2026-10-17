@@ -2,6 +2,7 @@ package com.convoscribe.engine.sherpa
 
 import com.convoscribe.diarization.Diarizer
 import com.convoscribe.diarization.SpeakerTurn
+import com.convoscribe.settings.SettingsRepository
 import com.k2fsa.sherpa.onnx.FastClusteringConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
@@ -57,7 +58,7 @@ class SherpaDiarizer(
             ),
             clustering = FastClusteringConfig(
                 numClusters = -1,
-                threshold = 0.5f,
+                threshold = SettingsRepository.DEFAULT_CLUSTER_THRESHOLD,
                 computeConfidence = true
             ),
             minDurationOn = 0.3f,

@@ -288,7 +288,9 @@ To measure speaker attribution on real recordings, and to tune the
 clustering threshold, use the desktop evaluation tool in
 [`scripts/eval/`](scripts/eval/README.md). It runs the app's models and
 settings with sherpa-onnx's Python package and scores hand-labelled
-recordings.
+recordings. The default clustering threshold, 0.75, was chosen with its
+benchmark of AMI meetings and synthetic conversations; the old default,
+0.5, found 2–4 times too many speakers.
 
 The `testDebugUnitTest` phase runs JUnit 4 + Robolectric +
 Turbine in the JVM; sherpa-onnx classes are never instantiated in

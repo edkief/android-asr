@@ -38,7 +38,7 @@ data class SettingsForm(
     val maxChars: String = "24000",
     val numThreads: Int = 4,
     val numSpeakers: Int = -1,
-    val clusterThreshold: Float = 0.5f,
+    val clusterThreshold: Float = SettingsRepository.DEFAULT_CLUSTER_THRESHOLD,
     val speakerMatchThreshold: Float = 0.5f
 ) {
     /**

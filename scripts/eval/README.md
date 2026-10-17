@@ -42,7 +42,7 @@ Output, one row per setting:
 
 | column | meaning |
 |---|---|
-| `threshold` | clustering threshold (Settings → Speakers; default 0.5) |
+| `threshold` | clustering threshold (Settings → Speakers; default 0.75) |
 | `speakers` | `auto`, or the fixed speaker count |
 | `found` | how many speakers the diarizer detected |
 | `line acc` | word accuracy when each transcript line gets one speaker (the behaviour before #1) |
@@ -63,6 +63,63 @@ label (more than 0.5 s away) are not counted.
 The demo alternates two LibriSpeech speakers with 0.4 s pauses. The pauses are too short to end
 a transcript line, so whole lines contain both speakers. Expect about 72% `line acc` and 100%
 `split acc`.
+
+## Benchmark: choosing the clustering threshold
+
+```sh
+.venv-eval/bin/python scripts/eval/eval_speakers.py --make-bench bench
+.venv-eval/bin/python scripts/eval/eval_speakers.py --bench bench --threads 2 -v
+```
+
+`--make-bench` downloads LibriSpeech dev-clean (340 MB) and four AMI meetings (180 MB) into
+`bench/`:
+
+- **AMI**: one meeting from each AMI test-set series (ES2004a, IS1009a, TS3003a, EN2002a). Each has
+  four people and lasts 15–35 min. The audio is from `Array1-01`, a single microphone on the
+  table, like a tablet lying there. Labels are the
+  [pyannote AMI setup](https://github.com/pyannote/AMI-diarization-setup) word-level RTTMs.
+- **libri-Nspk**: 12 synthetic conversations of about 4 min, four each with 2, 3 and 4
+  LibriSpeech speakers (fixed seed). A third of the turns are short interjections and pauses are
+  0.15–1.2 s, so many speaker changes fall inside a transcript line.
+
+`--bench DIR` scores every WAV in a folder that has a `.rttm`, `.labels.txt` or `.csv` next to it,
+so your own labelled recordings can go in the same folder. Transcripts and diarizer output are
+cached, so re-running is quick. Columns:
+
+| column | meaning |
+|---|---|
+| `F1` | purity/coverage F1: each detected speaker should be one person, and each person one detected speaker. Too many and too few speakers both lower it. **Tune on this.** |
+| `time acc` | share of single-speaker time given to the right person. It rewards lumping a quiet speaker in with a dominant one, so don't use it alone. |
+| `split acc` | word accuracy with the app's line splitting (needs ASR; `--no-asr` skips it) |
+| `count ok` / `count err` | share of recordings with the right speaker count / mean found − labelled |
+| `fixed n` | the speaker count set to the labelled count, as with Re-identify speakers |
+
+Result with sherpa-onnx 1.13.8, all 16 recordings, automatic speaker count:
+
+| threshold | F1 | split acc | count err |
+|---|---|---|---|
+| 0.50 (old default) | 61.1% | 54.8% | +11.25 |
+| 0.60 | 65.7% | 60.9% | +5.25 |
+| 0.70 | 70.9% | 68.1% | +2.12 |
+| **0.75 (default)** | **70.7%** | **67.6%** | **+1.00** |
+| 0.80 | 70.0% | 65.3% | +0.06 |
+| 0.90 | 67.3% | 61.1% | −1.19 |
+| fixed n | 68.9% | 64.7% | −0.56 |
+
+0.70 and 0.75 tie on F1. 0.75 was chosen because it over-counts by half as much, and it does
+better on AMI, the closest set to real use (F1 62.3% against 59.8%). Per set:
+
+- **AMI:** 0.5 found 8–16 speakers in 4-person meetings. F1 keeps rising up to 0.9, but past 0.8
+  speakers are merged.
+- **2 and 3 speakers:** best around 0.70–0.80.
+- **4 speakers:** best around 0.5–0.6, and 0.75 is within 2.5 points of that.
+
+Fixing the count is no better than automatic at 0.75. Re-identify speakers helps when automatic
+gets the count visibly wrong, not as a general improvement.
+
+Far-field meetings are much harder than the clean synthetic conversations: around 60% F1 against
+around 75%. Add a few labelled recordings from your own phone to `bench/` to check the choice
+holds for your rooms.
 
 ## After upgrading sherpa-onnx
 
