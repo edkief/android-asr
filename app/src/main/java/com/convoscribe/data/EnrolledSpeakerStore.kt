@@ -30,10 +30,10 @@ interface EnrolledSpeakerStore {
     suspend fun getAll(): List<SpeakerMatcher.Enrolled>
 
     /**
-     * Insert or replace the enrollment named [name] with the
-     * given [embedding]. Saving the same name twice keeps a
-     * single row with the newer embedding — see
-     * [EnrolledSpeakerDao.upsertByName].
+     * Add [embedding] as a voice sample for [name]. A person keeps
+     * several samples (each enrollment, or "Remember this voice" from
+     * a session, adds one); matching uses the best of them. Only the
+     * newest [MAX_SAMPLES_PER_PERSON] are kept.
      */
     suspend fun save(name: String, embedding: FloatArray)
 
@@ -61,16 +61,24 @@ class EnrolledSpeakerRepository(
     }
 
     override suspend fun save(name: String, embedding: FloatArray) {
-        dao.upsertByName(
+        dao.insert(
             EnrolledSpeakerEntity(
                 name = name,
                 embedding = embedding.toBytes(),
                 createdAt = System.currentTimeMillis()
             )
         )
+        dao.pruneName(name, MAX_SAMPLES_PER_PERSON)
     }
 
     override suspend fun delete(id: Long) {
         dao.delete(id)
     }
 }
+
+/**
+ * Voice samples kept per enrolled person. Several samples recorded in
+ * different rooms and on different days cover more of how someone
+ * sounds; old ones beyond this are dropped.
+ */
+const val MAX_SAMPLES_PER_PERSON: Int = 5

@@ -61,7 +61,13 @@ class RecordingControllerTest {
         private val nextId = AtomicLong(0L)
 
         /** A persisted transcript segment. */
-        data class Segment(val sessionId: Long, val startMs: Long, val endMs: Long, val text: String)
+        data class Segment(
+            val sessionId: Long,
+            val startMs: Long,
+            val endMs: Long,
+            val text: String,
+            val tokens: List<com.convoscribe.asr.TimedToken> = emptyList()
+        )
 
         /** A call to [finishRecording] in the order it happened. */
         data class Finish(val sessionId: Long, val durationMs: Long)
@@ -92,9 +98,15 @@ class RecordingControllerTest {
 
         override suspend fun audioPath(sessionId: Long): String = File(root, "$sessionId.wav").absolutePath
 
-        override suspend fun addSegment(sessionId: Long, startMs: Long, endMs: Long, text: String): Long {
+        override suspend fun addSegment(
+            sessionId: Long,
+            startMs: Long,
+            endMs: Long,
+            text: String,
+            tokens: List<com.convoscribe.asr.TimedToken>
+        ): Long {
             val segId = segments.size.toLong() + 1L
-            segments += Segment(sessionId, startMs, endMs, text)
+            segments += Segment(sessionId, startMs, endMs, text, tokens)
             return segId
         }
 
@@ -142,7 +154,8 @@ class RecordingControllerTest {
                     TranscriptEvent.Final(
                         text = "line-$n",
                         startMs = startMs,
-                        endMs = endMs
+                        endMs = endMs,
+                        tokens = listOf(com.convoscribe.asr.TimedToken(" line", startMs + 10))
                     )
                 )
             }
@@ -459,8 +472,19 @@ class RecordingControllerTest {
         h.controller.stop()
         advanceUntilIdle()
 
-        // The transcriber reported 0..300 ms; stored after the old 600 ms.
-        assertEquals(listOf(FakeRecordingStore.Segment(7L, 600L, 900L, "line-3")), store.segments)
+        // The transcriber reported 0..300 ms (token at 10 ms); stored after the old 600 ms.
+        assertEquals(
+            listOf(
+                FakeRecordingStore.Segment(
+                    7L,
+                    600L,
+                    900L,
+                    "line-3",
+                    listOf(com.convoscribe.asr.TimedToken(" line", 610))
+                )
+            ),
+            store.segments
+        )
         assertEquals(FakeRecordingStore.Finish(7L, 900L), store.finishCalls.last())
         assertEquals(900L, com.convoscribe.audio.WavReader.readMono16k(wav).size / 16L)
     }

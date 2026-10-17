@@ -73,7 +73,7 @@ object SpeakerAssigner {
      * PRD calls "within a second of the speaker" — anything
      * farther is silence we don't want to attribute to anyone.
      */
-    private const val NEAREST_GAP_MS = 1000L
+    internal const val NEAREST_GAP_MS = 1000L
 
     fun assign(segments: List<SegmentSpan>, turns: List<SpeakerTurn>): Assignment {
         if (segments.isEmpty()) return Assignment(emptyMap(), 0)
@@ -90,29 +90,34 @@ object SpeakerAssigner {
         // Step 3: renumber in first-appearance order (segments
         // sorted by startMs). Segments with `null` contribute
         // nothing — a silent stretch is not a new speaker.
-        val orderedSegments = segments.sortedBy { it.startMs }
-        val remap = mutableMapOf<Int, Int>()
-        var nextAssigned = 0
-        for (segment in orderedSegments) {
-            val raw = rawBySegmentId[segment.id] ?: continue
-            if (raw !in remap) {
-                remap[raw] = nextAssigned
-                nextAssigned += 1
-            }
-        }
+        val remap = renumber(segments.sortedBy { it.startMs }.map { rawBySegmentId[it.id] })
 
         val speakerBySegment = segments.associate { seg ->
             val raw = rawBySegmentId[seg.id]
             seg.id to raw?.let { remap[it] }
         }
-        return Assignment(speakerBySegment, nextAssigned, remap)
+        return Assignment(speakerBySegment, remap.size, remap)
+    }
+
+    /**
+     * Map raw engine speaker ids to `0, 1, 2, …` in first-appearance
+     * order. [rawInTimeOrder] is the raw speaker of each transcript
+     * line (or split piece) sorted by start time; `null`s are skipped.
+     */
+    fun renumber(rawInTimeOrder: List<Int?>): Map<Int, Int> {
+        val remap = LinkedHashMap<Int, Int>()
+        for (raw in rawInTimeOrder) {
+            if (raw != null && raw !in remap) remap[raw] = remap.size
+        }
+        return remap
     }
 
     /**
      * Pick the raw engine-id speaker (or `null`) for one
      * segment, following the overlap / nearest-turn rules above.
+     * Also used by [SegmentSplitter] for lines without token times.
      */
-    private fun assignRaw(segment: SegmentSpan, turns: List<SpeakerTurn>): Int? {
+    internal fun assignRaw(segment: SegmentSpan, turns: List<SpeakerTurn>): Int? {
         if (turns.isEmpty()) return null
 
         // (1) total overlap per speaker + earliest overlapping
@@ -182,7 +187,7 @@ object SpeakerAssigner {
      * overlap or touch; otherwise the distance from the earlier
      * interval's end to the later interval's start.
      */
-    private fun gapMs(segment: SegmentSpan, turn: SpeakerTurn): Long {
+    internal fun gapMs(segment: SegmentSpan, turn: SpeakerTurn): Long {
         if (segment.endMs <= turn.startMs) return turn.startMs - segment.endMs
         if (turn.endMs <= segment.startMs) return segment.startMs - turn.endMs
         return 0L

@@ -13,10 +13,20 @@ import kotlinx.coroutines.flow.asStateFlow
  * All writes go through [update] which clamps values to the ranges
  * the engines and the LLM client can actually use, then mirrors the
  * result into [settings] so observers re-render.
+ *
+ * The ASR engine is persisted only once the user has chosen one
+ * ([AppSettings.asrEngineChosen]); until then it comes from
+ * [defaultEngine], so a device whose NPU has not been verified starts
+ * on the CPU and a later passing NPU check can still switch it.
+ *
+ * @param defaultEngine engine to use while the user has not chosen
+ *   one. Production passes "npu if the engine check verified it on
+ *   this device, else cpu".
  */
 class SettingsRepository(
     private val prefs: SharedPreferences,
-    private val secrets: SecretStore
+    private val secrets: SecretStore,
+    private val defaultEngine: () -> String = { "cpu" }
 ) {
     private val _settings = MutableStateFlow(load())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
@@ -34,7 +44,8 @@ class SettingsRepository(
      *  - `asrLanguage` must be "en" or "fr"; anything else keeps
      *    the previous value (no exception, no overwrite)
      *  - `asrEngine` must be "npu" or "cpu"; anything else keeps
-     *    the previous value (no exception, no overwrite)
+     *    the previous value (no exception, no overwrite); changing
+     *    it marks the engine as chosen, so it is persisted from then on
      */
     fun update(transform: (AppSettings) -> AppSettings) {
         val current = _settings.value
@@ -45,13 +56,27 @@ class SettingsRepository(
             putString(KEY_LLM_MODEL, next.llmModel)
             putInt(KEY_MAX_TRANSCRIPT_CHARS, next.maxTranscriptChars)
             putString(KEY_ASR_LANGUAGE, next.asrLanguage)
-            putString(KEY_ASR_ENGINE, next.asrEngine)
+            putBoolean(KEY_ASR_ENGINE_CHOSEN, next.asrEngineChosen)
+            if (next.asrEngineChosen) putString(KEY_ASR_ENGINE, next.asrEngine) else remove(KEY_ASR_ENGINE)
             putInt(KEY_NUM_THREADS, next.numThreads)
             putInt(KEY_NUM_SPEAKERS, next.numSpeakers)
             putFloat(KEY_CLUSTER_THRESHOLD, next.clusterThreshold)
+            putBoolean(KEY_CLUSTER_THRESHOLD_TUNED, true)
             putFloat(KEY_SPEAKER_MATCH_THRESHOLD, next.speakerMatchThreshold)
         }.apply()
         _settings.value = next
+    }
+
+    /**
+     * Re-read the device default engine. Called after the engine
+     * check verifies the NPU, so a user who never picked an engine
+     * moves to it; an explicit choice is left alone.
+     */
+    fun refreshDefaults() {
+        val current = _settings.value
+        if (current.asrEngineChosen) return
+        val engine = defaultEngine()
+        if (engine != current.asrEngine) _settings.value = current.copy(asrEngine = engine)
     }
 
     fun apiKey(): String = secrets.getApiKey()
@@ -67,33 +92,61 @@ class SettingsRepository(
             llmModel = prefs.getString(KEY_LLM_MODEL, "") ?: "",
             maxTranscriptChars = prefs.getInt(KEY_MAX_TRANSCRIPT_CHARS, 24000),
             asrLanguage = rawLang,
-            asrEngine = prefs.getString(KEY_ASR_ENGINE, null) ?: "npu",
+            asrEngine = prefs.getString(KEY_ASR_ENGINE, null) ?: "",
             numThreads = prefs.getInt(KEY_NUM_THREADS, 4),
             numSpeakers = prefs.getInt(KEY_NUM_SPEAKERS, -1),
-            clusterThreshold = prefs.getFloat(KEY_CLUSTER_THRESHOLD, 0.5f),
+            clusterThreshold = loadClusterThreshold(),
             speakerMatchThreshold = prefs.getFloat(KEY_SPEAKER_MATCH_THRESHOLD, 0.5f)
         )
         // On load we don't have a "previous" value; if the persisted
-        // asrLanguage is not en/fr we fall back to "en"; if the
-        // persisted asrEngine is not "npu" or "cpu" we fall back to
-        // "npu" (the documented default). Every other numeric field is
-        // normalised in-place via [normaliseNumeric].
+        // asrLanguage is not en/fr we fall back to "en". The stored
+        // engine counts only if the user chose it; installs from before
+        // the chosen flag existed (engine stored, no flag) count as
+        // chosen so nothing changes under them. Otherwise, or if the
+        // stored value is invalid, the engine is the device default.
+        // Every numeric field is normalised in-place via [normaliseNumeric].
         val lang = if (raw.asrLanguage == "en" || raw.asrLanguage == "fr") raw.asrLanguage else "en"
-        val engine = if (raw.asrEngine == "npu" || raw.asrEngine == "cpu") raw.asrEngine else "npu"
-        return raw.copy(asrLanguage = lang, asrEngine = engine).normaliseNumeric().copy(
+        val storedValid = raw.asrEngine == "npu" || raw.asrEngine == "cpu"
+        val chosen = storedValid && prefs.getBoolean(KEY_ASR_ENGINE_CHOSEN, prefs.contains(KEY_ASR_ENGINE))
+        val engine = if (chosen) raw.asrEngine else defaultEngine()
+        return raw.copy(asrLanguage = lang, asrEngine = engine, asrEngineChosen = chosen).normaliseNumeric().copy(
             llmBaseUrl = raw.llmBaseUrl.trim().trimEnd('/')
         )
     }
 
-    private companion object {
+    /**
+     * Installs from before the threshold was tuned stored the old
+     * default (0.5) on every save, whether or not the user touched
+     * the slider. Treat that value as "default" once, so they move to
+     * [DEFAULT_CLUSTER_THRESHOLD]; any other stored value, and any
+     * value saved since (which sets [KEY_CLUSTER_THRESHOLD_TUNED]),
+     * is the user's.
+     */
+    private fun loadClusterThreshold(): Float {
+        val stored = prefs.getFloat(KEY_CLUSTER_THRESHOLD, DEFAULT_CLUSTER_THRESHOLD)
+        val legacyDefault = !prefs.getBoolean(KEY_CLUSTER_THRESHOLD_TUNED, false) && stored == LEGACY_CLUSTER_THRESHOLD
+        return if (legacyDefault) DEFAULT_CLUSTER_THRESHOLD else stored
+    }
+
+    internal companion object {
+        /**
+         * Default clustering threshold. 0.75 had the best purity/coverage
+         * F1 (with 0.70) over 4 AMI meetings and 12 synthetic 2-4 speaker
+         * conversations, and half the speaker over-count of 0.70; 0.5
+         * found 2-4x too many speakers.
+         */
+        const val DEFAULT_CLUSTER_THRESHOLD = 0.75f
+        private const val LEGACY_CLUSTER_THRESHOLD = 0.5f
         const val KEY_LLM_BASE_URL = "llmBaseUrl"
         const val KEY_LLM_MODEL = "llmModel"
         const val KEY_MAX_TRANSCRIPT_CHARS = "maxTranscriptChars"
         const val KEY_ASR_LANGUAGE = "asrLanguage"
         const val KEY_ASR_ENGINE = "asrEngine"
+        const val KEY_ASR_ENGINE_CHOSEN = "asrEngineChosen"
         const val KEY_NUM_THREADS = "numThreads"
         const val KEY_NUM_SPEAKERS = "numSpeakers"
         const val KEY_CLUSTER_THRESHOLD = "clusterThreshold"
+        const val KEY_CLUSTER_THRESHOLD_TUNED = "clusterThresholdTuned"
         const val KEY_SPEAKER_MATCH_THRESHOLD = "speakerMatchThreshold"
     }
 }
@@ -111,7 +164,10 @@ private fun AppSettings.validatedAgainst(previous: AppSettings): AppSettings {
     return this.normaliseNumeric().copy(
         llmBaseUrl = llmBaseUrl.trim().trimEnd('/'),
         asrLanguage = lang,
-        asrEngine = engine
+        asrEngine = engine,
+        // Changing the engine through update() is a choice; saving
+        // other fields leaves the engine on the device default.
+        asrEngineChosen = asrEngineChosen || engine != previous.asrEngine
     )
 }
 

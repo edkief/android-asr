@@ -2,6 +2,7 @@ package com.convoscribe.engine.sherpa
 
 import com.convoscribe.diarization.Diarizer
 import com.convoscribe.diarization.SpeakerTurn
+import com.convoscribe.settings.SettingsRepository
 import com.k2fsa.sherpa.onnx.FastClusteringConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
@@ -57,7 +58,8 @@ class SherpaDiarizer(
             ),
             clustering = FastClusteringConfig(
                 numClusters = -1,
-                threshold = 0.5f
+                threshold = SettingsRepository.DEFAULT_CLUSTER_THRESHOLD,
+                computeConfidence = true
             ),
             minDurationOn = 0.3f,
             minDurationOff = 0.5f
@@ -77,9 +79,13 @@ class SherpaDiarizer(
         // kicking off the work.
         sd.setConfig(
             sd.config.copy(
+                // computeConfidence: per-turn confidence lets the
+                // enrolled-voice matching use each speaker's clearest
+                // audio (SpeakerSampleCollector).
                 clustering = FastClusteringConfig(
                     numClusters = numSpeakers,
-                    threshold = threshold
+                    threshold = threshold,
+                    computeConfidence = true
                 )
             )
         )
@@ -91,7 +97,8 @@ class SherpaDiarizer(
             SpeakerTurn(
                 startMs = (seg.start * 1000f).toLong(),
                 endMs = (seg.end * 1000f).toLong(),
-                speaker = seg.speaker
+                speaker = seg.speaker,
+                confidence = seg.confidence
             )
         }
     }

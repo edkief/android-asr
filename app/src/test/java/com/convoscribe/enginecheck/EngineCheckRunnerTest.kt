@@ -160,6 +160,24 @@ class EngineCheckRunnerTest {
     }
 
     /**
+     * Regression: an unreadable sample clip (the Kroko clip is 24 kHz,
+     * which the reader used to reject) threw out of run() and crashed
+     * the app. It must come back as a FAILED result.
+     */
+    @Test
+    fun run_loadSamplesThrows_errorIsCapturedInsteadOfThrown() {
+        val runner = EngineCheckRunner(
+            factory = TranscriberFactory { error("must not be called") },
+            loadSamples = { throw IllegalArgumentException("Only mono WAV is supported") },
+            clock = StepperClock()
+        )
+        val result = runner.run("cpu")
+        assertEquals("Only mono WAV is supported", result.error)
+        assertEquals("FAILED", verdict(result))
+        assertEquals(0L, result.audioMs)
+    }
+
+    /**
      * Test 3 from the spec: verdict boundaries — RTF 0.49 OK,
      * 0.5 MARGINAL, 1.0 TOO SLOW.
      */

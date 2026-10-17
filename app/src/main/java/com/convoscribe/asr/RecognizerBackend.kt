@@ -47,6 +47,15 @@ interface RecognizerBackend : Closeable {
     fun currentText(): String
 
     /**
+     * The current utterance's tokens with their times in
+     * milliseconds *since the last [reset]* (sherpa-onnx restarts its
+     * timestamps there; `scripts/eval/eval_speakers.py --check-sherpa`
+     * re-verifies this after an upgrade). The segmenter adds the
+     * utterance's start. Default: none, for backends without timings.
+     */
+    fun currentTokens(): List<TimedToken> = emptyList()
+
+    /**
      * Whether the backend's endpoint detector says the current
      * utterance is closed. The segmenter reads this immediately
      * after [decodeAvailable]; sherpa implements it via

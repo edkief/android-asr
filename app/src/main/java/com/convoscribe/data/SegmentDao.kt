@@ -37,6 +37,9 @@ interface SegmentDao {
      * label on a single segment. Used by the diarization write-back
      * to set the index one segment at a time.
      */
+    @Query("DELETE FROM segments WHERE id = :segmentId")
+    suspend fun delete(segmentId: Long)
+
     @Query("UPDATE segments SET speakerIndex = :speakerIndex WHERE id = :segmentId")
     suspend fun setSpeaker(segmentId: Long, speakerIndex: Int?)
 }

@@ -1,46 +1,53 @@
 package com.convoscribe.diarization
 
-import com.convoscribe.data.SegmentEntity
 import com.convoscribe.data.defaultSpeakerLabel
+
+/** A stretch of transcript and the speaker it is labelled with (`null` = none). */
+data class LabelledSpan(val startMs: Long, val endMs: Long, val speaker: Int?)
 
 /**
  * Keeps the speaker names a user typed when a session is diarized
- * again (after continuing a recording, or "Diarize again").
+ * again (after continuing a recording, or "Re-identify speakers").
  *
  * A re-run numbers speakers from scratch, so old index 0 may now be
- * index 1. Each old speaker with a custom name (anything other than
- * the default `"Speaker N"`) hands that name to the new speaker it
- * shares the most speech with, measured over the segments that had
- * an old label, weighted by segment duration. Each new speaker gets
- * at most one name and each name goes to at most one speaker; the
- * strongest overlaps are matched first.
+ * index 1, and lines may have been split into new rows. Each old
+ * speaker with a custom name (anything other than the default
+ * `"Speaker N"`) hands that name to the new speaker it shares the
+ * most transcript time with. Each new speaker gets at most one name
+ * and each name goes to at most one speaker; the strongest overlaps
+ * are matched first.
  */
 object SpeakerLabelCarryOver {
 
     /**
-     * @param previousSegments the session's segments with the speaker
-     *   indices from the previous diarization (`null` = unlabelled,
-     *   which includes segments recorded since).
+     * @param previous the transcript as last diarized (old speaker
+     *   indices; `null` for lines recorded since).
      * @param previousLabels old speaker index → label, as stored.
-     * @param newAssignment segment id → new speaker index.
+     * @param current the transcript as just diarized (new indices).
      * @return new speaker index → carried-over custom label.
      */
     fun carry(
-        previousSegments: List<SegmentEntity>,
+        previous: List<LabelledSpan>,
         previousLabels: Map<Int, String>,
-        newAssignment: Map<Long, Int?>
+        current: List<LabelledSpan>
     ): Map<Int, String> {
         val custom = previousLabels.filter { (index, label) -> label != defaultSpeakerLabel(index) }
         if (custom.isEmpty()) return emptyMap()
 
-        // (newIndex, oldIndex) -> milliseconds of speech in common.
+        // (newIndex, oldIndex) -> milliseconds of transcript in common.
         val overlap = mutableMapOf<Pair<Int, Int>, Long>()
-        for (segment in previousSegments) {
-            val old = segment.speakerIndex ?: continue
-            if (old !in custom) continue
-            val new = newAssignment[segment.id] ?: continue
-            val weight = (segment.endMs - segment.startMs).coerceAtLeast(1L)
-            overlap.merge(new to old, weight, Long::plus)
+        val now = current.filter { it.speaker != null }.sortedBy { it.startMs }
+        var first = 0
+        for (old in previous.filter { it.speaker in custom }.sortedBy { it.startMs }) {
+            // Both lists are transcript lines in time order, so their
+            // ends are ordered too: skip what ended before this span.
+            while (first < now.size && now[first].endMs <= old.startMs) first++
+            var i = first
+            while (i < now.size && now[i].startMs < old.endMs) {
+                val ms = minOf(old.endMs, now[i].endMs) - maxOf(old.startMs, now[i].startMs)
+                if (ms > 0) overlap.merge(now[i].speaker!! to old.speaker!!, ms, Long::plus)
+                i++
+            }
         }
 
         val result = mutableMapOf<Int, String>()

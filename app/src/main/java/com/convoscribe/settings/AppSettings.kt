@@ -6,11 +6,17 @@ package com.convoscribe.settings
  * number of speakers automatically; any other value (1..10) pins
  * the count.
  *
- * [asrEngine] is the speech-recognition engine the user picked in
- * Settings: `"npu"` (Nemotron on the Hexagon NPU, default, English
- * only) or `"cpu"` (Kroko zipformer, English and French). An
- * unsupported value is rejected by [SettingsRepository.update] so a
- * bad write keeps the previous value.
+ * [asrEngine] is the speech-recognition engine: `"npu"` (Nemotron on
+ * the Hexagon NPU, English only) or `"cpu"` (Kroko zipformer, English
+ * and French). An unsupported value is rejected by
+ * [SettingsRepository.update] so a bad write keeps the previous value.
+ * [asrEngineChosen] is `true` once the user picked the engine in
+ * Settings; until then the engine follows the device default (CPU,
+ * or NPU once the engine check has seen it work, see
+ * [com.convoscribe.enginecheck.NpuAvailability]).
+ *
+ * [clusterThreshold] defaults to the value chosen with
+ * `scripts/eval/eval_speakers.py --bench` (see its README).
  *
  * Field defaults match a fresh install on first launch; values are
  * written to a `SharedPreferences` file by [SettingsRepository] and
@@ -21,9 +27,10 @@ data class AppSettings(
     val llmModel: String = "",
     val maxTranscriptChars: Int = 24000,
     val asrLanguage: String = "en",
-    val asrEngine: String = "npu",
+    val asrEngine: String = "cpu",
+    val asrEngineChosen: Boolean = false,
     val numThreads: Int = 4,
     val numSpeakers: Int = -1,
-    val clusterThreshold: Float = 0.5f,
+    val clusterThreshold: Float = SettingsRepository.DEFAULT_CLUSTER_THRESHOLD,
     val speakerMatchThreshold: Float = 0.5f
 )

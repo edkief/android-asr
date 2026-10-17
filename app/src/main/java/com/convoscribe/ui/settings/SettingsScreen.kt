@@ -561,9 +561,9 @@ private fun SpeakersSection(
         style = MaterialTheme.typography.titleSmall
     )
     Slider(
-        value = threshold.coerceIn(0.3f, 0.8f),
-        onValueChange = { onThresholdChange(it.coerceIn(0.3f, 0.8f)) },
-        valueRange = 0.3f..0.8f,
+        value = threshold.coerceIn(0.4f, 0.95f),
+        onValueChange = { onThresholdChange(it.coerceIn(0.4f, 0.95f)) },
+        valueRange = 0.4f..0.95f,
         modifier = Modifier.fillMaxWidth()
     )
     Text(

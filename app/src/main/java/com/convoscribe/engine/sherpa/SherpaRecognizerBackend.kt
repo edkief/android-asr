@@ -1,6 +1,7 @@
 package com.convoscribe.engine.sherpa
 
 import com.convoscribe.asr.RecognizerBackend
+import com.convoscribe.asr.TimedToken
 import com.convoscribe.audio.AudioSpec
 import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
@@ -42,6 +43,12 @@ class SherpaRecognizerBackend(
     }
 
     override fun currentText(): String = recognizer.getResult(stream).text
+
+    override fun currentTokens(): List<TimedToken> {
+        val result = recognizer.getResult(stream)
+        val count = minOf(result.tokens.size, result.timestamps.size)
+        return List(count) { i -> TimedToken(result.tokens[i], (result.timestamps[i] * 1000f).toLong()) }
+    }
 
     override fun isEndpoint(): Boolean = recognizer.isEndpoint(stream)
 

@@ -20,7 +20,15 @@ sealed interface TranscriptEvent {
      * Closed utterance ready to be persisted. [startMs] is
      * `samplesToMs(segmentStartSample)`, [endMs] is
      * `samplesToMs(totalSamples)` at the moment the endpoint fired
-     * (or `finish()` was called).
+     * (or `finish()` was called). [tokens] are the utterance's pieces
+     * with their times on the same clock as [startMs]; empty when the
+     * backend does not report them. Diarization uses them to split a
+     * line at a speaker change.
      */
-    data class Final(val text: String, val startMs: Long, val endMs: Long) : TranscriptEvent
+    data class Final(
+        val text: String,
+        val startMs: Long,
+        val endMs: Long,
+        val tokens: List<TimedToken> = emptyList()
+    ) : TranscriptEvent
 }

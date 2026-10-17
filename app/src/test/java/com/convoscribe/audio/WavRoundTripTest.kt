@@ -208,22 +208,17 @@ class WavRoundTripTest {
     }
 
     @Test
-    fun reader_throwsOn44_1kHzWav() {
+    fun reader_resamples44_1kHzWavTo16kHz() {
+        // Formerly rejected; non-16 kHz clips are now resampled.
         val file = tmp.newFile("cd.wav")
         writeWav(
             file = file,
             sampleRate = 44_100,
             channels = 1,
             bitsPerSample = 16,
-            samples = ShortArray(100) { 0 }
+            samples = ShortArray(441) { 0 }
         )
-        val ex = assertThrows(IllegalArgumentException::class.java) {
-            WavReader.readMono16k(file)
-        }
-        assertTrue(
-            "message should mention 16 000 or the bad rate: ${ex.message}",
-            ex.message!!.contains("16000") || ex.message!!.contains("44100")
-        )
+        assertEquals(160, WavReader.readMono16k(file).size)
     }
 
     @Test
@@ -346,5 +341,30 @@ class WavRoundTripTest {
         WavWriter(file, append = true).use { it.write(ShortArray(10)) }
         assertEquals(44L + 10 * 2, file.length())
         assertEquals(10, WavReader.readMono16k(file).size)
+    }
+
+    /**
+     * Regression: model sample clips are not always 16 kHz (Kroko's is
+     * 24 kHz). They are resampled instead of rejected.
+     */
+    @Test
+    fun read24kHzFile_resamplesTo16kHz() {
+        val file = tmp.newFile("clip24k.wav")
+        // One second at 24 kHz: a slow ramp, so linear interpolation is exact.
+        writeWav(
+            file = file,
+            sampleRate = 24_000,
+            channels = 1,
+            bitsPerSample = 16,
+            samples = ShortArray(24_000) { i -> i.toShort() }
+        )
+
+        val samples = WavReader.readMono16k(file)
+
+        assertEquals(16_000, samples.size)
+        // Output sample i sits at input position i * 1.5.
+        assertEquals(0f, samples[0], 1e-6f)
+        assertEquals(1.5f / 32_768f, samples[1], 1e-6f)
+        assertEquals(15_000f / 32_768f, samples[10_000], 1e-6f)
     }
 }

@@ -292,6 +292,82 @@ class DiarizeSessionUseCaseTest {
     }
 
     /**
+     * A line spanning a speaker change (quick exchange, no 0.8 s
+     * pause) is split into one row per speaker.
+     */
+    @Test
+    fun run_lineWithTokenTimesSpanningTwoSpeakers_isSplitIntoLabelledLines() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        repo.addSegment(
+            id,
+            startMs = 0L,
+            endMs = 4_000L,
+            text = "Are you coming yes I am",
+            tokens = listOf(
+                " are" to 100L,
+                " you" to 300L,
+                " coming" to 500L,
+                " yes" to 1_500L,
+                " I" to 1_800L,
+                " am" to 2_000L
+            )
+                .map { (t, ms) -> com.convoscribe.asr.TimedToken(t, ms) }
+        )
+        val useCase = DiarizeSessionUseCase(
+            repository = repo,
+            diarizerFactory = ScriptedDiarizerFactory(
+                ScriptedDiarizer(
+                    listOf(
+                        SpeakerTurn(startMs = 0L, endMs = 1_200L, speaker = 4),
+                        SpeakerTurn(startMs = 1_300L, endMs = 3_000L, speaker = 2)
+                    )
+                )
+            ),
+            settings = settings,
+            readSamples = { FloatArray(64_000) }
+        )
+
+        useCase.run(id)
+
+        val segments = repo.getSegments(id)
+        assertEquals(listOf("Are you coming", "Yes I am"), segments.map { it.text })
+        assertEquals(listOf(0, 1), segments.map { it.speakerIndex })
+        assertEquals(listOf(0L, 1_500L), segments.map { it.startMs })
+        assertEquals(listOf("Speaker 1", "Speaker 2"), repo.getSpeakers(id).map { it.label })
+        assertEquals(SessionStatus.DIARIZED, repo.getSession(id)!!.status)
+    }
+
+    /**
+     * "Re-identify speakers" with a count saves it on the session; a
+     * later run with no count (e.g. after continuing the recording)
+     * reuses it instead of the Settings default.
+     */
+    @Test
+    fun run_withSpeakerCount_savesItOnTheSessionAndLaterRunsReuseIt() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        repo.addSegment(id, startMs = 0L, endMs = 1000L, text = "first")
+        val diarizer = ScriptedDiarizer(listOf(SpeakerTurn(startMs = 0L, endMs = 1000L, speaker = 0)))
+        val useCase = DiarizeSessionUseCase(
+            repository = repo,
+            diarizerFactory = ScriptedDiarizerFactory(diarizer),
+            settings = settings,
+            readSamples = { FloatArray(16_000) }
+        )
+        assertEquals(-1, settings.settings.value.numSpeakers)
+
+        useCase.run(id, numSpeakers = 3)
+        assertEquals(3, diarizer.lastNumSpeakers)
+        assertEquals(3, repo.getSession(id)!!.numSpeakers)
+
+        useCase.run(id)
+        assertEquals(3, diarizer.lastNumSpeakers)
+
+        useCase.run(id, numSpeakers = -1)
+        assertEquals(-1, diarizer.lastNumSpeakers)
+        assertEquals(-1, repo.getSession(id)!!.numSpeakers)
+    }
+
+    /**
      * Re-diarizing (after continuing a recording) keeps a speaker
      * name the user typed instead of resetting it to "Speaker N".
      */

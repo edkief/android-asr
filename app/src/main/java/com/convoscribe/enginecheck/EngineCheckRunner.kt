@@ -84,10 +84,13 @@ class EngineCheckRunner(
      */
     fun run(engine: String): EngineCheckResult {
         val firstRun = factory.needsPreparation("en")
-        val samples = loadSamples()
-        val audioMs: Long = samples.size.toLong() / 16L
+        var audioMs = 0L
         var transcriber: com.convoscribe.asr.StreamingTranscriber? = null
         return try {
+            // Inside the try: an unreadable sample clip must become a
+            // FAILED result, not an exception out of the check.
+            val samples = loadSamples()
+            audioMs = samples.size.toLong() / 16L
             val initStart = clock()
             transcriber = factory.create("en")
             val initMs = clock() - initStart

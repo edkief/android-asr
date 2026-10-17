@@ -1,6 +1,7 @@
 package com.convoscribe.data
 
 import androidx.room.withTransaction
+import com.convoscribe.asr.TimedToken
 import com.convoscribe.recording.RecordingStore
 import java.io.File
 import kotlinx.coroutines.flow.Flow
@@ -76,15 +77,21 @@ class SessionRepository(
      * Append a transcript segment. Called by the ASR engine as
      * endpoints are detected. Returns the new segment id.
      */
-    override suspend fun addSegment(sessionId: Long, startMs: Long, endMs: Long, text: String): Long =
-        segmentDao.insert(
-            SegmentEntity(
-                sessionId = sessionId,
-                startMs = startMs,
-                endMs = endMs,
-                text = text
-            )
+    override suspend fun addSegment(
+        sessionId: Long,
+        startMs: Long,
+        endMs: Long,
+        text: String,
+        tokens: List<TimedToken>
+    ): Long = segmentDao.insert(
+        SegmentEntity(
+            sessionId = sessionId,
+            startMs = startMs,
+            endMs = endMs,
+            text = text,
+            tokens = TokenTimingCodec.encode(tokens)
         )
+    )
 
     /**
      * Recording finished. Stamp the duration and move the session
@@ -243,6 +250,16 @@ class SessionRepository(
     }
 
     /**
+     * Remember the speaker count chosen for [id] ("Re-identify
+     * speakers"): `-1` automatic, `1..10` fixed, `null` back to the
+     * Settings default. Every later diarization of the session uses
+     * it, including the one after a continued recording.
+     */
+    suspend fun setSessionSpeakerCount(id: Long, numSpeakers: Int?) {
+        sessionDao.setNumSpeakers(id, numSpeakers?.let { if (it < 1) -1 else it.coerceAtMost(10) })
+    }
+
+    /**
      * Stamp [durationMs] on [id]. Used by the crash-recovery loop
      * to compute the duration of a WAV that was left in a
      * half-closed state when the process was killed; the recorder
@@ -277,6 +294,11 @@ class SessionRepository(
      * ignored — the diarizer is the authority on the set of
      * speakers, the label map just renames some of them.
      *
+     * [replacements] maps a segment id to the pieces it was split
+     * into at speaker changes; that row is deleted and the pieces are
+     * inserted with their own speaker. Segments not in it keep their
+     * row and take their index from [assignments].
+     *
      * Everything happens in one transaction so a crash mid-write
      * does not leave the session half-diarized: either every
      * segment has the new index and the speakers table is replaced,
@@ -286,11 +308,27 @@ class SessionRepository(
         sessionId: Long,
         assignments: Map<Long, Int?>,
         speakerCount: Int,
-        labels: Map<Int, String> = emptyMap()
+        labels: Map<Int, String> = emptyMap(),
+        replacements: Map<Long, List<SegmentPiece>> = emptyMap()
     ) {
         db.withTransaction {
             assignments.forEach { (segmentId, speakerIndex) ->
                 segmentDao.setSpeaker(segmentId, speakerIndex)
+            }
+            replacements.forEach { (segmentId, pieces) ->
+                segmentDao.delete(segmentId)
+                for (piece in pieces) {
+                    segmentDao.insert(
+                        SegmentEntity(
+                            sessionId = sessionId,
+                            startMs = piece.startMs,
+                            endMs = piece.endMs,
+                            text = piece.text,
+                            speakerIndex = piece.speakerIndex,
+                            tokens = TokenTimingCodec.encode(piece.tokens)
+                        )
+                    )
+                }
             }
             speakerDao.deleteForSession(sessionId)
             val rows = (0 until speakerCount).map { i ->

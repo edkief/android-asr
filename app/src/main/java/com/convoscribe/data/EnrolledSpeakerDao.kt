@@ -11,11 +11,9 @@ import kotlinx.coroutines.flow.Flow
  * expected to stay small (a handful of household voices), so the
  * whole table is loaded into memory when [getAll] runs.
  *
- * The unique index on `name` (see [EnrolledSpeakerEntity]) makes
- * [upsertByName] behave like an upsert: Room routes the insert
- * through `REPLACE`, so the same name always keeps a single row
- * with the newest embedding — older rows are gone in the same
- * transaction, no duplicates can accumulate.
+ * Since schema v3 the `name` index is not unique: a person may
+ * have several rows, one per voice sample. Callers decide how many
+ * to keep (see [EnrolledSpeakerRepository.save]).
  */
 @Dao
 interface EnrolledSpeakerDao {
@@ -34,14 +32,20 @@ interface EnrolledSpeakerDao {
     @Query("SELECT * FROM enrolled_speakers ORDER BY name COLLATE NOCASE ASC")
     suspend fun getAll(): List<EnrolledSpeakerEntity>
 
-    /**
-     * Insert a new enrollment, or replace the row with the same
-     * [EnrolledSpeakerEntity.name] (Room's `REPLACE` strategy
-     * relies on the unique index on `name`). Saving the same
-     * name twice keeps one row with the newer embedding.
-     */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertByName(entity: EnrolledSpeakerEntity): Long
+    /** Insert one voice sample. */
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(entity: EnrolledSpeakerEntity): Long
+
+    /** Keep only the [keep] newest voice samples stored under [name]. */
+    @Query(
+        "DELETE FROM enrolled_speakers WHERE name = :name AND id NOT IN " +
+            "(SELECT id FROM enrolled_speakers WHERE name = :name ORDER BY createdAt DESC, id DESC LIMIT :keep)"
+    )
+    suspend fun pruneName(name: String, keep: Int)
+
+    /** Remove every voice sample stored under [name]. */
+    @Query("DELETE FROM enrolled_speakers WHERE name = :name")
+    suspend fun deleteByName(name: String)
 
     @Query("DELETE FROM enrolled_speakers WHERE id = :id")
     suspend fun delete(id: Long)

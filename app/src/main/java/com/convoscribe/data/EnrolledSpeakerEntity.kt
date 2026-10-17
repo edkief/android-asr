@@ -19,7 +19,9 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "enrolled_speakers",
-    indices = [Index(value = ["name"], unique = true)]
+    // Not unique since schema v3: a person may have several voice
+    // samples (one row each).
+    indices = [Index(value = ["name"])]
 )
 data class EnrolledSpeakerEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

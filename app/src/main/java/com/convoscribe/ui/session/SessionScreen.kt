@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -46,6 +47,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
@@ -70,7 +72,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -199,6 +203,7 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
     // Continuing needs the recorder to be free: one recording at a
     // time, whichever session it belongs to.
     val recorderState by container.recordingController.state.collectAsStateWithLifecycle()
+    val appSettings by container.settingsRepository.settings.collectAsStateWithLifecycle()
 
     SessionBody(
         title = state.title,
@@ -234,17 +239,17 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
         onRenameSpeaker = { index, label -> vm.renameSpeaker(index, label) },
         onRenameAndRemember = { index, label -> vm.renameAndRemember(index, label) },
         onRenameSession = { title -> vm.renameSession(title) },
-        onDiarizeAgain = {
-            // Hand off to the foreground service, which
-            // promotes itself to `dataSync` while the
-            // diarizer runs. The status banner already
-            // picks up the DIARIZING flip the
-            // use case writes, so the screen mirrors
-            // the work without having to track it
-            // locally.
+        effectiveSpeakerCount = state.numSpeakers ?: appSettings.numSpeakers,
+        onReidentifySpeakers = { count ->
+            // Hand off to the foreground service, which saves the
+            // count on the session and promotes itself to
+            // `dataSync` while the diarizer runs. The status banner
+            // already picks up the DIARIZING flip the use case
+            // writes, so the screen mirrors the work without having
+            // to track it locally.
             ContextCompat.startForegroundService(
                 context,
-                RecordingService.diarizeIntent(context, sessionId)
+                RecordingService.diarizeIntent(context, sessionId, numSpeakers = count)
             )
         },
         onSummarise = { summaryVm.summarise() },
@@ -281,7 +286,8 @@ internal fun SessionBody(
     onRenameSpeaker: (Int, String) -> Unit,
     onRenameAndRemember: (Int, String) -> Unit,
     onRenameSession: (String) -> Unit,
-    onDiarizeAgain: () -> Unit,
+    effectiveSpeakerCount: Int,
+    onReidentifySpeakers: (Int) -> Unit,
     onSummarise: () -> Unit,
     onCancelSummary: () -> Unit,
     onAsk: (String) -> Unit,
@@ -299,6 +305,7 @@ internal fun SessionBody(
     var renameSpeakerIndex by remember { mutableStateOf<Int?>(null) }
     var renameSessionOpen by remember { mutableStateOf(false) }
     var clearQuestionsOpen by remember { mutableStateOf(false) }
+    var reidentifyOpen by remember { mutableStateOf(false) }
     Scaffold(
         snackbarHost = {
             // One-line snackbar with a short duration: the
@@ -353,11 +360,11 @@ internal fun SessionBody(
                         )
                         val canDiarize = status != SessionStatus.DIARIZING && status != SessionStatus.RECORDING
                         DropdownMenuItem(
-                            text = { Text(text = stringResource(R.string.session_overflow_diarize)) },
+                            text = { Text(text = stringResource(R.string.session_overflow_reidentify)) },
                             enabled = canDiarize,
                             onClick = {
                                 overflowExpanded = false
-                                onDiarizeAgain()
+                                reidentifyOpen = true
                             }
                         )
                         DropdownMenuItem(
@@ -453,6 +460,16 @@ internal fun SessionBody(
             onDismiss = { renameSessionOpen = false }
         )
     }
+    if (reidentifyOpen) {
+        ReidentifySpeakersDialog(
+            current = effectiveSpeakerCount,
+            onConfirm = { count ->
+                reidentifyOpen = false
+                onReidentifySpeakers(count)
+            },
+            onDismiss = { reidentifyOpen = false }
+        )
+    }
     // Clear-questions confirmation. The action itself is gated on
     // `messages.isNotEmpty()` already, so the dialog only opens
     // when there is something to clear.
@@ -476,6 +493,56 @@ internal fun SessionBody(
             }
         )
     }
+}
+
+/**
+ * "Re-identify speakers" dialog: pick how many people speak in the
+ * recording (Automatic, 2, 3 or 4), preselected with [current] (the
+ * session's count, else the Settings default; a Settings value
+ * outside the list is offered too). [onConfirm] receives `-1` for
+ * Automatic.
+ */
+@Composable
+private fun ReidentifySpeakersDialog(current: Int, onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
+    val options = (listOf(-1, 2, 3, 4) + current).distinct().sortedBy { if (it == -1) 0 else it }
+    var selected by remember { mutableIntStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.session_reidentify_title)) },
+        text = {
+            Column {
+                Text(text = stringResource(R.string.session_reidentify_message))
+                for (option in options) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(selected = option == selected, role = Role.RadioButton) { selected = option },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = option == selected, onClick = null)
+                        Text(
+                            text = if (option == -1) {
+                                stringResource(R.string.session_reidentify_auto)
+                            } else {
+                                pluralStringResource(R.plurals.session_reidentify_count, option, option)
+                            },
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(selected) }) {
+                Text(text = stringResource(R.string.session_reidentify_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.session_ask_clear_cancel))
+            }
+        }
+    )
 }
 
 /**

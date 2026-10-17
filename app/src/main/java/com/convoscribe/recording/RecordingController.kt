@@ -324,7 +324,8 @@ class RecordingController(
                         sessionId = sessionId,
                         startMs = final.startMs + segmentOffsetMs,
                         endMs = final.endMs + segmentOffsetMs,
-                        text = final.text
+                        text = final.text,
+                        tokens = final.tokens.map { it.copy(ms = it.ms + segmentOffsetMs) }
                     )
                 }
             }

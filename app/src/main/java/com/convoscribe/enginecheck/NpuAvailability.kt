@@ -27,18 +27,25 @@ class NpuAvailability(private val prefs: SharedPreferences) {
      */
     fun blockedReason(): String? = prefs.getString(KEY_BLOCKED_REASON, null)
 
+    /**
+     * `true` once an NPU probe ran cleanly on this device and no failure
+     * has been seen since. The default ASR engine is NPU only then.
+     */
+    fun isVerified(): Boolean = prefs.getBoolean(KEY_VERIFIED, false)
+
     /** Record that the probe process died while starting the NPU. */
     fun markFailed(reason: String) {
-        prefs.edit().putString(KEY_BLOCKED_REASON, reason).apply()
+        prefs.edit().putString(KEY_BLOCKED_REASON, reason).putBoolean(KEY_VERIFIED, false).apply()
     }
 
-    /** Clear any recorded failure after a clean NPU probe run. */
-    fun markWorking() {
-        prefs.edit().remove(KEY_BLOCKED_REASON).apply()
+    /** Record a clean NPU probe run: clears any failure and marks the NPU verified. */
+    fun markVerified() {
+        prefs.edit().remove(KEY_BLOCKED_REASON).putBoolean(KEY_VERIFIED, true).apply()
     }
 
     companion object {
         const val PREFS_NAME = "npu_availability"
         private const val KEY_BLOCKED_REASON = "blockedReason"
+        private const val KEY_VERIFIED = "verified"
     }
 }

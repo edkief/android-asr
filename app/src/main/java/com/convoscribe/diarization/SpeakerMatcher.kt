@@ -91,8 +91,11 @@ object SpeakerMatcher {
      *  2. Sort the survivors by score, descending.
      *  3. Walk the sorted list, claiming the highest score
      *     first. Each speaker index can be claimed once and
-     *     each enrolled name can be claimed once — the second
-     *     claim on either side loses.
+     *     each enrolled *name* can be claimed once — the second
+     *     claim on either side loses. A person with several
+     *     voice samples has one row per sample; the walk reaches
+     *     their best-matching sample first, so the person's
+     *     score is effectively the max over their samples.
      *
      * The greedy step matches the "best score first, no
      * replanning" behaviour the spec calls out: a clear winner
@@ -131,13 +134,16 @@ object SpeakerMatcher {
         // used at most once. The result key is the speaker
         // index; the value is the user-typed name.
         val usedSpeakers = HashSet<Int>()
-        val usedEnrolled = HashSet<Int>()
+        // By name, not row: a person enrolled with several samples
+        // has several rows, and must still label only one speaker.
+        val usedNames = HashSet<String>()
         val result = LinkedHashMap<Int, String>()
         for (candidate in candidates) {
             if (candidate.speaker in usedSpeakers) continue
-            if (candidate.enrolledIndex in usedEnrolled) continue
+            val name = enrolled[candidate.enrolledIndex].name
+            if (name in usedNames) continue
             usedSpeakers.add(candidate.speaker)
-            usedEnrolled.add(candidate.enrolledIndex)
+            usedNames.add(name)
             result[candidate.speaker] = enrolled[candidate.enrolledIndex].name
         }
         return result

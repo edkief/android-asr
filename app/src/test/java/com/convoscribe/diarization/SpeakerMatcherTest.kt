@@ -211,4 +211,30 @@ class SpeakerMatcherTest {
         // Sanity check on the helper itself: |unit(θ)| = 1.
         assertEquals(1.0, sqrt((a[0] * a[0] + a[1] * a[1]).toDouble()), 1e-6)
     }
+
+    /**
+     * A person enrolled with several samples is matched on their best
+     * sample, and still labels only one speaker.
+     */
+    @Test
+    fun assignNames_personWithSeveralSamples_matchesOnBestSampleAndOnlyOnce() {
+        val embeddings = mapOf(
+            0 to floatArrayOf(1f, 0f, 0f),
+            1 to floatArrayOf(0f, 1f, 0f)
+        )
+        val enrolled = listOf(
+            // Alice's first sample is far from everyone; her second is speaker 0.
+            SpeakerMatcher.Enrolled("Alice", floatArrayOf(0f, 0f, 1f)),
+            SpeakerMatcher.Enrolled("Alice", floatArrayOf(1f, 0f, 0f)),
+            // Alice's third sample matches speaker 1 (0.8) better than Bob
+            // does (0.7)… but Alice is already speaker 0, so speaker 1
+            // goes to Bob instead of becoming a second "Alice".
+            SpeakerMatcher.Enrolled("Alice", floatArrayOf(0.6f, 0.8f, 0f)),
+            SpeakerMatcher.Enrolled("Bob", floatArrayOf(0f, 0.7f, 0.714f))
+        )
+
+        val names = SpeakerMatcher.assignNames(embeddings, enrolled, threshold = 0.5f)
+
+        assertEquals(mapOf(0 to "Alice", 1 to "Bob"), names)
+    }
 }

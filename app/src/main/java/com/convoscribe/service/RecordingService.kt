@@ -103,7 +103,8 @@ class RecordingService : Service() {
                     // the service. Bail out cleanly.
                     if (controller().state.value.phase == RecordingPhase.IDLE) stopSelf()
                 } else {
-                    handleDiarize(id)
+                    val count = intent.getIntExtra(EXTRA_NUM_SPEAKERS, NUM_SPEAKERS_UNSET)
+                    handleDiarize(id, count.takeIf { it != NUM_SPEAKERS_UNSET })
                 }
             }
             // Defensive: an intent with an unknown action is a
@@ -193,7 +194,7 @@ class RecordingService : Service() {
      * "Identifying speakers…" notification, runs the use case,
      * and stops.
      */
-    private fun handleDiarize(sessionId: Long) {
+    private fun handleDiarize(sessionId: Long, numSpeakers: Int?) {
         ensureNotificationChannel()
         ServiceCompat.startForeground(
             this,
@@ -202,7 +203,7 @@ class RecordingService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         )
         scope.launch {
-            diarizerUseCase().run(sessionId)
+            diarizerUseCase().run(sessionId, numSpeakers = numSpeakers)
             ServiceCompat.stopForeground(this@RecordingService, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -422,6 +423,14 @@ class RecordingService : Service() {
         const val EXTRA_SESSION_ID = "com.convoscribe.EXTRA_SESSION_ID"
 
         /**
+         * Optional int extra for [ACTION_DIARIZE]: the speaker count
+         * to save on the session and use (`-1` automatic).
+         */
+        const val EXTRA_NUM_SPEAKERS = "com.convoscribe.EXTRA_NUM_SPEAKERS"
+
+        private const val NUM_SPEAKERS_UNSET = Int.MIN_VALUE
+
+        /**
          * Build an [Intent] that, when sent to [RecordingService],
          * starts a new recording session, or continues
          * [resumeSessionId] by appending to its audio and transcript.
@@ -443,14 +452,16 @@ class RecordingService : Service() {
 
         /**
          * Build an [Intent] that, when sent to [RecordingService],
-         * re-runs diarization for [sessionId]. The service
-         * promotes to a `dataSync`-typed foreground while it works,
-         * then stops itself when done.
+         * re-runs diarization for [sessionId], optionally with a new
+         * speaker count for that session ([numSpeakers], `-1`
+         * automatic). The service promotes to a `dataSync`-typed
+         * foreground while it works, then stops itself when done.
          */
-        fun diarizeIntent(context: Context, sessionId: Long): Intent {
+        fun diarizeIntent(context: Context, sessionId: Long, numSpeakers: Int? = null): Intent {
             return Intent(context, RecordingService::class.java)
                 .setAction(ACTION_DIARIZE)
                 .putExtra(EXTRA_SESSION_ID, sessionId)
+                .apply { if (numSpeakers != null) putExtra(EXTRA_NUM_SPEAKERS, numSpeakers) }
         }
     }
 }
