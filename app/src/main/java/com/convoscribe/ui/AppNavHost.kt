@@ -18,6 +18,7 @@ private const val ROUTE_HOME = "home"
 private const val ROUTE_SETUP = "setup"
 private const val ROUTE_SETUP_WITH_ENGINE = "setup?engine={engine}"
 private const val ROUTE_RECORD = "record"
+private const val ROUTE_RECORD_RESUME = "record/resume/{id}"
 private const val ROUTE_SESSION_DETAIL = "session/{id}"
 private const val ROUTE_ENGINE_CHECK = "engine-check"
 private const val ROUTE_SETTINGS = "settings"
@@ -36,6 +37,9 @@ private const val ROUTE_SPEAKERS = "speakers"
  *  - `setup` — first-run model download (also reachable with
  *    `?engine=npu|cpu` to scope the download to one engine);
  *  - `record` — live-transcript screen reached from the FAB;
+ *  - `record/resume/{id}` — the same screen, continuing session
+ *    `id` (reached from the session screen's mic button); stopping
+ *    returns to that session;
  *  - `engine-check` — diagnostics screen reached from the home
  *    overflow menu or the Settings screen;
  *  - `settings` — LLM endpoint, transcription engine, threads,
@@ -89,6 +93,17 @@ fun AppNavHost(startDestination: String = ROUTE_HOME) {
         }
         composable(ROUTE_RECORD) {
             RecordScreen(navController = navController)
+        }
+        composable(
+            route = ROUTE_RECORD_RESUME,
+            arguments = listOf(
+                navArgument("id") {
+                    type = NavType.LongType
+                }
+            )
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getLong("id") ?: 0L
+            RecordScreen(navController = navController, resumeSessionId = id.takeIf { it > 0L })
         }
         composable(ROUTE_ENGINE_CHECK) {
             EngineCheckScreen(navController = navController)

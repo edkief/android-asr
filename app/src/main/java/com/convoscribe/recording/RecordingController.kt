@@ -83,7 +83,7 @@ class RecordingController(
     private var sessionJob: Job? = null
 
     /**
-     * Start a new session. No-op unless [RecordingState.phase] is
+     * Start a new session, or continue [resumeSessionId]. No-op unless [RecordingState.phase] is
      * currently [RecordingPhase.IDLE]: the service may call this
      * twice by mistake (e.g. on a configuration change while a
      * session is already live) and we silently drop the second
@@ -93,8 +93,16 @@ class RecordingController(
      * cancelled service also cancels the recording cleanly. Errors
      * are surfaced through [RecordingState.error] (see the class
      * note), never thrown out of [start].
+     *
+     * With [resumeSessionId] the audio is appended to that session's
+     * WAV and transcript instead of a new session: the session's own
+     * language is used, new segments are offset by the audio already
+     * recorded, and [RecordingState.elapsedMs] continues from it.
+     * The session is only flipped back to `RECORDING` once the
+     * transcriber and the WAV are open, so a failed continue leaves
+     * it untouched.
      */
-    fun start(scope: CoroutineScope) {
+    fun start(scope: CoroutineScope, resumeSessionId: Long? = null) {
         if (_state.value.phase != RecordingPhase.IDLE) return
         // Reset everything we know from a prior session: a fresh
         // start means a fresh error message, a fresh partial/final
@@ -103,8 +111,10 @@ class RecordingController(
         // (before the launched coroutine runs) so the UI gets the
         // right label even if the NPU first-run compile is slow
         // enough to be observed.
-        val lang = language()
-        val preparingNpu = transcriberFactory.needsPreparation(lang)
+        val settingsLang = language()
+        // A continued session's language is only known once its row
+        // is read, so its NPU flag is sampled inside the coroutine.
+        val preparingNpu = resumeSessionId == null && transcriberFactory.needsPreparation(settingsLang)
         _state.update {
             RecordingState(
                 phase = RecordingPhase.LOADING,
@@ -122,18 +132,35 @@ class RecordingController(
             var transcriber: StreamingTranscriber? = null
             var wav: WavWriter? = null
             var sessionId: Long? = null
+            var lang = settingsLang
             try {
+                if (resumeSessionId != null) {
+                    lang = store.sessionLanguage(resumeSessionId)
+                    if (transcriberFactory.needsPreparation(lang)) {
+                        _state.update { it.copy(preparingNpu = true) }
+                    }
+                }
                 // Building a streaming transcriber may load a model
                 // from disk and allocate native memory; offload to
                 // the ASR dispatcher so the caller's thread is free.
                 transcriber = withContext(asrDispatcher) {
                     transcriberFactory.create(lang)
                 }
-                val title = "Recording " +
-                    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(clock()))
-                val id = store.createSession(title, lang)
+                val id: Long
+                if (resumeSessionId != null) {
+                    id = resumeSessionId
+                    wav = WavWriter(File(store.audioPath(id)), append = true)
+                    store.reopenSession(id)
+                } else {
+                    val title = "Recording " +
+                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(clock()))
+                    id = store.createSession(title, lang)
+                    wav = WavWriter(File(store.audioPath(id)))
+                }
                 sessionId = id
-                wav = WavWriter(File(store.audioPath(id)))
+                // The recognizer's timestamps start at 0 for this
+                // run; shift them past the audio already in the file.
+                segmentOffsetMs = samplesToMs(wav.samplesWritten)
                 // Stash the handles so [stop] (which runs on the
                 // caller's scope, not this launched one) can call
                 // [StreamingTranscriber.finish] and close the WAV
@@ -146,13 +173,13 @@ class RecordingController(
                         phase = RecordingPhase.RECORDING,
                         preparingNpu = false,
                         sessionId = id,
-                        elapsedMs = 0L,
+                        elapsedMs = samplesToMs(wav.samplesWritten),
                         partialText = "",
                         finalLines = emptyList(),
                         error = null
                     )
                 }
-                Log.i(TAG, "recording started session=$id lang=$lang")
+                Log.i(TAG, "recording started session=$id lang=$lang resumed=${resumeSessionId != null}")
                 // Drain the audio source until the collector is
                 // cancelled (stop() / scope cancellation). Each
                 // emission is persisted twice: once to the WAV on
@@ -269,6 +296,12 @@ class RecordingController(
     private var activeWav: WavWriter? = null
 
     /**
+     * Added to every segment's start/end: the audio that was already
+     * in the session's WAV when this run started (0 for a new session).
+     */
+    private var segmentOffsetMs: Long = 0L
+
+    /**
      * Apply a list of [TranscriptEvent]s to the published state and
      * persist any closed utterances through [RecordingStore].
      * Partial events overwrite the placeholder; final events are
@@ -289,8 +322,8 @@ class RecordingController(
                 if (final.text.isNotBlank()) {
                     store.addSegment(
                         sessionId = sessionId,
-                        startMs = final.startMs,
-                        endMs = final.endMs,
+                        startMs = final.startMs + segmentOffsetMs,
+                        endMs = final.endMs + segmentOffsetMs,
                         text = final.text
                     )
                 }

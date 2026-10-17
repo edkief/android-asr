@@ -292,6 +292,54 @@ class DiarizeSessionUseCaseTest {
     }
 
     /**
+     * Re-diarizing (after continuing a recording) keeps a speaker
+     * name the user typed instead of resetting it to "Speaker N".
+     */
+    @Test
+    fun run_again_afterContinuingRecording_keepsCustomSpeakerNames() = runTest {
+        val id = repo.createSession(title = "Test", language = "en")
+        repo.addSegment(id, startMs = 0L, endMs = 1000L, text = "first")
+        repo.addSegment(id, startMs = 1000L, endMs = 2000L, text = "second")
+        val firstRun = DiarizeSessionUseCase(
+            repository = repo,
+            diarizerFactory = ScriptedDiarizerFactory(
+                ScriptedDiarizer(
+                    listOf(
+                        SpeakerTurn(startMs = 0L, endMs = 1000L, speaker = 0),
+                        SpeakerTurn(startMs = 1000L, endMs = 2000L, speaker = 1)
+                    )
+                )
+            ),
+            settings = settings,
+            readSamples = { FloatArray(32_000) }
+        )
+        firstRun.run(id)
+        repo.renameSpeaker(id, speakerIndex = 1, label = "Bob")
+
+        // More audio was appended: a third segment, spoken by Bob.
+        repo.addSegment(id, startMs = 2000L, endMs = 3000L, text = "third")
+        val secondRun = DiarizeSessionUseCase(
+            repository = repo,
+            diarizerFactory = ScriptedDiarizerFactory(
+                ScriptedDiarizer(
+                    listOf(
+                        SpeakerTurn(startMs = 0L, endMs = 1000L, speaker = 0),
+                        SpeakerTurn(startMs = 1000L, endMs = 3000L, speaker = 1)
+                    )
+                )
+            ),
+            settings = settings,
+            readSamples = { FloatArray(48_000) }
+        )
+        secondRun.run(id)
+
+        val labels = repo.getSpeakers(id).associate { it.speakerIndex to it.label }
+        val bobIndex = repo.getSegments(id).single { it.text == "third" }.speakerIndex
+        assertEquals("Bob", labels[bobIndex])
+        assertEquals(setOf("Speaker 1", "Bob"), labels.values.toSet())
+    }
+
+    /**
      * Acceptance test 2: a diarizer that throws leaves the session
      * in `DIARIZATION_FAILED` and the segment rows untouched (no
      * speaker index, no speaker rows created).

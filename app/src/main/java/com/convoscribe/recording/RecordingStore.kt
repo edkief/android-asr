@@ -21,6 +21,23 @@ interface RecordingStore {
     suspend fun createSession(title: String, language: String): Long
 
     /**
+     * Language [sessionId] was recorded in, so continuing it uses
+     * the same ASR model even if Settings changed since. Throws
+     * [IllegalStateException] for an unknown session.
+     */
+    suspend fun sessionLanguage(sessionId: Long): String
+
+    /**
+     * Flip an existing session back to `RECORDING` so more audio can
+     * be appended (see [RecordingController.start]). Called only
+     * once the transcriber and the WAV file are open, so a failed
+     * continue leaves the session as it was. [finishRecording] ends
+     * it again; crash recovery treats it like any interrupted
+     * recording.
+     */
+    suspend fun reopenSession(sessionId: Long)
+
+    /**
      * Absolute path of the WAV file the recorder should write to
      * for [sessionId]. Implementation-specific: production returns
      * the `audioPath` stamped by [createSession] (a path under the

@@ -69,6 +69,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
@@ -86,6 +87,7 @@ import com.convoscribe.data.MessageRole
 import com.convoscribe.data.SessionStatus
 import com.convoscribe.data.SpeakerEntity
 import com.convoscribe.data.TranscriptLine
+import com.convoscribe.recording.RecordingPhase
 import com.convoscribe.service.RecordingService
 
 /**
@@ -99,6 +101,16 @@ import com.convoscribe.service.RecordingService
  * primary text colour, so a label rendered in any of them stays
  * legible against the transcript background.
  */
+/**
+ * Statuses a session can be continued from: finished recording,
+ * with no diarization in flight.
+ */
+private val CONTINUABLE_STATUSES = setOf(
+    SessionStatus.TRANSCRIBED,
+    SessionStatus.DIARIZED,
+    SessionStatus.DIARIZATION_FAILED
+)
+
 private val SPEAKER_PALETTE: List<Color> = listOf(
     // blue
     Color(0xFF1976D2),
@@ -184,6 +196,10 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
         }
     }
 
+    // Continuing needs the recorder to be free: one recording at a
+    // time, whichever session it belongs to.
+    val recorderState by container.recordingController.state.collectAsStateWithLifecycle()
+
     SessionBody(
         title = state.title,
         status = state.status,
@@ -193,6 +209,10 @@ fun SessionScreen(sessionId: Long, navController: NavHostController) {
         summaryState = summaryState,
         askState = askState,
         snackbarHostState = snackbarHostState,
+        canContinueRecording = !state.notFound &&
+            recorderState.phase == RecordingPhase.IDLE &&
+            state.status in CONTINUABLE_STATUSES,
+        onContinueRecording = { navController.navigate("record/resume/$sessionId") },
         onBack = { navController.popBackStack() },
         onShare = {
             // Build the share intent on the main thread; the
@@ -254,6 +274,8 @@ internal fun SessionBody(
     summaryState: SummaryUiState,
     askState: AskUiState,
     snackbarHostState: SnackbarHostState,
+    canContinueRecording: Boolean,
+    onContinueRecording: () -> Unit,
     onBack: () -> Unit,
     onShare: () -> Unit,
     onRenameSpeaker: (Int, String) -> Unit,
@@ -300,6 +322,12 @@ internal fun SessionBody(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onContinueRecording, enabled = canContinueRecording) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_mic),
+                            contentDescription = stringResource(R.string.session_continue_recording)
+                        )
+                    }
                     IconButton(onClick = onShare) {
                         Icon(
                             imageVector = Icons.Filled.Share,

@@ -81,9 +81,13 @@ import com.convoscribe.service.RecordingService
  * @param navController navigation controller the screen pops back
  *   to the home screen from, and pushes the session-detail route
  *   to after a successful stop.
+ * @param resumeSessionId finished session to continue recording
+ *   into, or `null` for a new session. When set, Start appends to
+ *   that session and stopping pops back to its (already open)
+ *   session screen instead of pushing a new one.
  */
 @Composable
-fun RecordScreen(navController: NavHostController) {
+fun RecordScreen(navController: NavHostController, resumeSessionId: Long? = null) {
     val context = LocalContext.current
     val container = (context.applicationContext as ConvoApp).container
     val vm: RecordViewModel = viewModel(
@@ -114,7 +118,7 @@ fun RecordScreen(navController: NavHostController) {
         if (micOk) {
             ContextCompat.startForegroundService(
                 context,
-                RecordingService.startIntent(context)
+                RecordingService.startIntent(context, resumeSessionId)
             )
         }
     }
@@ -125,8 +129,14 @@ fun RecordScreen(navController: NavHostController) {
     // the back stack.
     LaunchedEffect(state.lastCompletedSessionId) {
         val id = state.lastCompletedSessionId ?: return@LaunchedEffect
-        navController.navigate("session/$id") {
-            popUpTo("record") { inclusive = true }
+        if (resumeSessionId != null) {
+            // Continued from that session's screen, which is right
+            // below us on the back stack.
+            navController.popBackStack()
+        } else {
+            navController.navigate("session/$id") {
+                popUpTo("record") { inclusive = true }
+            }
         }
         vm.onNavigatedToSession()
     }
@@ -139,6 +149,7 @@ fun RecordScreen(navController: NavHostController) {
         partialText = state.partialText,
         error = state.error,
         micDeniedMessage = micDeniedMessage,
+        continuing = resumeSessionId != null,
         onBack = { navController.popBackStack() },
         onStart = {
             // Defensive: re-check at click time, not just at
@@ -155,7 +166,7 @@ fun RecordScreen(navController: NavHostController) {
             }
             ContextCompat.startForegroundService(
                 context,
-                RecordingService.startIntent(context)
+                RecordingService.startIntent(context, resumeSessionId)
             )
         },
         onStop = {
@@ -173,6 +184,8 @@ fun RecordScreen(navController: NavHostController) {
  *
  * @param micDeniedMessage shown between the elapsed time and the
  *   final transcript when the user denied the runtime permission.
+ * @param continuing `true` when appending to an existing session;
+ *   only changes the title.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -184,6 +197,7 @@ internal fun RecordBody(
     partialText: String,
     error: String?,
     micDeniedMessage: String?,
+    continuing: Boolean = false,
     onBack: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit
@@ -191,7 +205,10 @@ internal fun RecordBody(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(text = stringResource(R.string.record_title)) },
+                title = {
+                    val titleRes = if (continuing) R.string.record_title_continue else R.string.record_title
+                    Text(text = stringResource(titleRes))
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(

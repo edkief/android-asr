@@ -22,19 +22,41 @@ import java.nio.channels.FileChannel
  * disk with a header that has zero sizes. [repairHeader] detects that
  * shape and rebuilds the sizes from the actual file length, so a
  * crash-recovered file is still readable by [WavReader].
+ *
+ * With [append] set and an existing file of at least a header's
+ * length, the writer keeps the audio already there and continues
+ * after its last sample ([samplesWritten] starts at the existing
+ * sample count), which is how a finished session is continued. The
+ * header is not trusted: the sample count comes from the file
+ * length, as in [repairHeader], and [close] patches the sizes.
+ *
+ * @param file target WAV file; created if missing.
+ * @param append keep existing audio and write after it instead of
+ *   truncating. Ignored when the file is missing or shorter than a
+ *   header, in which case a fresh file is laid out.
  */
-class WavWriter(file: File) : Closeable {
+class WavWriter(file: File, append: Boolean = false) : Closeable {
 
-    private val raf: RandomAccessFile = RandomAccessFile(file, "rw").apply {
-        setLength(0)
-    }
+    private val raf: RandomAccessFile = RandomAccessFile(file, "rw")
     private val channel: FileChannel = raf.channel
 
-    /** Total PCM16 samples appended across all [write] calls. */
+    /** Total PCM16 samples in the file's data chunk, including any kept by [append]. */
     var samplesWritten: Long = 0L
         private set
 
     init {
+        if (append && raf.length() >= HEADER_SIZE) {
+            // Continue an existing recording. A trailing odd byte
+            // (a crash mid-sample) is dropped so samples stay aligned.
+            samplesWritten = (raf.length() - HEADER_SIZE) / 2
+            raf.setLength(HEADER_SIZE + samplesWritten * 2)
+        } else {
+            writeFreshHeader()
+        }
+    }
+
+    private fun writeFreshHeader() {
+        raf.setLength(0)
         // Truncate anything that was on disk and lay out the
         // 44-byte header with the two size fields zeroed. The data
         // chunk starts right after, so subsequent writes simply

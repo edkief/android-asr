@@ -321,4 +321,30 @@ class WavRoundTripTest {
         }
         raf.close()
     }
+
+    @Test
+    fun appendMode_keepsExistingAudioAndPatchesSizes() {
+        val file = tmp.newFile("append.wav")
+        WavWriter(file).use { it.write(ShortArray(100) { i -> i.toShort() }) }
+
+        WavWriter(file, append = true).use { writer ->
+            assertEquals(100L, writer.samplesWritten)
+            writer.write(ShortArray(50) { i -> (1_000 + i).toShort() })
+            assertEquals(150L, writer.samplesWritten)
+        }
+
+        assertEquals(44L + 150 * 2, file.length())
+        val samples = WavReader.readMono16k(file)
+        assertEquals(150, samples.size)
+        assertEquals(99 / 32768f, samples[99], 1e-6f)
+        assertEquals(1_000 / 32768f, samples[100], 1e-6f)
+    }
+
+    @Test
+    fun appendMode_onMissingFile_startsFresh() {
+        val file = java.io.File(tmp.root, "fresh.wav")
+        WavWriter(file, append = true).use { it.write(ShortArray(10)) }
+        assertEquals(44L + 10 * 2, file.length())
+        assertEquals(10, WavReader.readMono16k(file).size)
+    }
 }

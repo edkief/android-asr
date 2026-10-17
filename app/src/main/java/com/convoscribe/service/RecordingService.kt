@@ -92,7 +92,9 @@ class RecordingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> handleStart()
+            ACTION_START -> handleStart(
+                resumeSessionId = intent.getLongExtra(EXTRA_SESSION_ID, -1L).takeIf { it > 0L }
+            )
             ACTION_STOP -> handleStop()
             ACTION_DIARIZE -> {
                 val id = intent.getLongExtra(EXTRA_SESSION_ID, -1L)
@@ -123,7 +125,7 @@ class RecordingService : Service() {
         super.onDestroy()
     }
 
-    private fun handleStart() {
+    private fun handleStart(resumeSessionId: Long?) {
         // Only allow one START — if the service is already driving
         // a session, second callers get the live notification and
         // nothing else. The controller's `start` is also idempotent
@@ -143,7 +145,7 @@ class RecordingService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         )
         acquireWakeLock()
-        controller.start(scope)
+        controller.start(scope, resumeSessionId)
         startStateObserver()
     }
 
@@ -412,17 +414,25 @@ class RecordingService : Service() {
          */
         const val ACTION_DIARIZE = "com.convoscribe.DIARIZE"
 
-        /** Long extra key for [ACTION_DIARIZE]; the session id. */
+        /**
+         * Long extra key for the session id: required by
+         * [ACTION_DIARIZE]; optional on [ACTION_START], where it
+         * names a finished session to continue recording into.
+         */
         const val EXTRA_SESSION_ID = "com.convoscribe.EXTRA_SESSION_ID"
 
         /**
          * Build an [Intent] that, when sent to [RecordingService],
-         * starts the recording session. The caller is responsible
-         * for `startForegroundService` (Android 8+) and the
-         * `POST_NOTIFICATIONS` runtime permission (Android 13+).
+         * starts a new recording session, or continues
+         * [resumeSessionId] by appending to its audio and transcript.
+         * The caller is responsible for `startForegroundService`
+         * (Android 8+) and the `POST_NOTIFICATIONS` runtime
+         * permission (Android 13+).
          */
-        fun startIntent(context: Context): Intent =
-            Intent(context, RecordingService::class.java).setAction(ACTION_START)
+        fun startIntent(context: Context, resumeSessionId: Long? = null): Intent =
+            Intent(context, RecordingService::class.java)
+                .setAction(ACTION_START)
+                .apply { if (resumeSessionId != null) putExtra(EXTRA_SESSION_ID, resumeSessionId) }
 
         /**
          * Build an [Intent] that, when sent to [RecordingService],
