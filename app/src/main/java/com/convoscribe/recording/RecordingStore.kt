@@ -1,5 +1,7 @@
 package com.convoscribe.recording
 
+import com.convoscribe.asr.TimedToken
+
 /**
  * Persistence façade [RecordingController] uses to keep its
  * session/segment lifecycle in the database. Splitting it off from
@@ -51,8 +53,15 @@ interface RecordingStore {
      * the ASR endpoint) and return its id. Called by the controller
      * as soon as a [com.convoscribe.asr.TranscriptEvent.Final] is
      * observed, so partial results are never lost on a crash.
+     * [tokens] carry absolute times within the recording.
      */
-    suspend fun addSegment(sessionId: Long, startMs: Long, endMs: Long, text: String): Long
+    suspend fun addSegment(
+        sessionId: Long,
+        startMs: Long,
+        endMs: Long,
+        text: String,
+        tokens: List<TimedToken> = emptyList()
+    ): Long
 
     /**
      * Stamp the final duration and flip the session to `TRANSCRIBED`

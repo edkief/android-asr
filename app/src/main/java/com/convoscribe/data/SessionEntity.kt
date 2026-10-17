@@ -21,5 +21,10 @@ data class SessionEntity(
     val durationMs: Long = 0,
     val language: String,
     val audioPath: String = "",
-    val status: SessionStatus
+    val status: SessionStatus,
+    /**
+     * Speaker count chosen for this session ("Re-identify speakers"):
+     * `null` follows Settings, `-1` is automatic, `1..10` fixed.
+     */
+    val numSpeakers: Int? = null
 )

@@ -278,4 +278,51 @@ class EndpointSegmenterTest {
         seg.close()
         assertTrue(true)
     }
+
+    /**
+     * Backend whose tokens carry times relative to the last reset, as
+     * sherpa-onnx's do. One `(text, endpoint, tokens)` per chunk.
+     */
+    private class TokenBackend(script: List<Triple<String, Boolean, List<TimedToken>>>) : RecognizerBackend {
+        private val responses = ArrayDeque(script)
+        private var current = Triple("", false, emptyList<TimedToken>())
+        override fun acceptWaveform(samples: FloatArray) {
+            responses.removeFirstOrNull()?.let { current = it }
+        }
+        override fun decodeAvailable() = Unit
+        override fun currentText(): String = current.first
+        override fun currentTokens(): List<TimedToken> = current.third
+        override fun isEndpoint(): Boolean = current.second
+        override fun reset() {
+            current = Triple("", false, emptyList())
+        }
+        override fun inputFinished() = Unit
+        override fun close() = Unit
+    }
+
+    @Test
+    fun final_carriesTokensOnTheTranscriberClock() {
+        val hi = listOf(TimedToken(" hi", 120))
+        val there = listOf(TimedToken(" there", 50), TimedToken("s", 90))
+        val segmenter = EndpointSegmenter(
+            TokenBackend(
+                listOf(
+                    Triple("hi", false, hi),
+                    Triple("hi", false, hi),
+                    // Endpoint at 300 ms.
+                    Triple("hi", true, hi),
+                    Triple("theres", false, there),
+                    // Endpoint at 500 ms.
+                    Triple("theres", true, there)
+                )
+            )
+        )
+
+        val finals = (0 until 5).flatMap { segmenter.accept(chunk()) }.filterIsInstance<TranscriptEvent.Final>()
+
+        assertEquals(listOf(TimedToken(" hi", 120)), finals[0].tokens)
+        // The second line started at 300 ms; its token times restart at 0.
+        assertEquals(listOf(TimedToken(" there", 350), TimedToken("s", 390)), finals[1].tokens)
+        assertEquals(300L, finals[1].startMs)
+    }
 }

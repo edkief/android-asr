@@ -30,10 +30,8 @@ interface EnrolledSpeakerStore {
     suspend fun getAll(): List<SpeakerMatcher.Enrolled>
 
     /**
-     * Insert or replace the enrollment named [name] with the
-     * given [embedding]. Saving the same name twice keeps a
-     * single row with the newer embedding — see
-     * [EnrolledSpeakerDao.upsertByName].
+     * Store [embedding] as the voice sample for [name]. Saving the
+     * same name twice keeps a single row with the newer embedding.
      */
     suspend fun save(name: String, embedding: FloatArray)
 
@@ -61,7 +59,10 @@ class EnrolledSpeakerRepository(
     }
 
     override suspend fun save(name: String, embedding: FloatArray) {
-        dao.upsertByName(
+        // One sample per name: the old one is replaced. (The table
+        // allows several since schema v3.)
+        dao.deleteByName(name)
+        dao.insert(
             EnrolledSpeakerEntity(
                 name = name,
                 embedding = embedding.toBytes(),

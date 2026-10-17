@@ -96,11 +96,7 @@ class EndpointSegmenter(
         val events = mutableListOf<TranscriptEvent>()
         if (backend.isEndpoint()) {
             if (text.isNotBlank()) {
-                events += TranscriptEvent.Final(
-                    text = text,
-                    startMs = samplesToMs(segmentStartSample, sampleRate),
-                    endMs = samplesToMs(totalSamples, sampleRate)
-                )
+                events += finalEvent(text)
             }
             backend.reset()
             segmentStartSample = totalSamples
@@ -122,11 +118,7 @@ class EndpointSegmenter(
         val text = TextNormalizer.normalize(backend.currentText())
         val events = mutableListOf<TranscriptEvent>()
         if (text.isNotBlank()) {
-            events += TranscriptEvent.Final(
-                text = text,
-                startMs = samplesToMs(segmentStartSample, sampleRate),
-                endMs = samplesToMs(totalSamples, sampleRate)
-            )
+            events += finalEvent(text)
         }
         // Always send an empty partial last so the UI can clear any
         // placeholder it had on screen.
@@ -137,5 +129,19 @@ class EndpointSegmenter(
 
     override fun close() {
         backend.close()
+    }
+
+    /**
+     * The closed utterance, with the backend's token times (relative
+     * to the last reset) moved onto this transcriber's clock.
+     */
+    private fun finalEvent(text: String): TranscriptEvent.Final {
+        val startMs = samplesToMs(segmentStartSample, sampleRate)
+        return TranscriptEvent.Final(
+            text = text,
+            startMs = startMs,
+            endMs = samplesToMs(totalSamples, sampleRate),
+            tokens = backend.currentTokens().map { it.copy(ms = it.ms + startMs) }
+        )
     }
 }

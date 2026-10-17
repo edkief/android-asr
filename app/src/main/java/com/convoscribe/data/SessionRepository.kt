@@ -1,6 +1,7 @@
 package com.convoscribe.data
 
 import androidx.room.withTransaction
+import com.convoscribe.asr.TimedToken
 import com.convoscribe.recording.RecordingStore
 import java.io.File
 import kotlinx.coroutines.flow.Flow
@@ -76,15 +77,21 @@ class SessionRepository(
      * Append a transcript segment. Called by the ASR engine as
      * endpoints are detected. Returns the new segment id.
      */
-    override suspend fun addSegment(sessionId: Long, startMs: Long, endMs: Long, text: String): Long =
-        segmentDao.insert(
-            SegmentEntity(
-                sessionId = sessionId,
-                startMs = startMs,
-                endMs = endMs,
-                text = text
-            )
+    override suspend fun addSegment(
+        sessionId: Long,
+        startMs: Long,
+        endMs: Long,
+        text: String,
+        tokens: List<TimedToken>
+    ): Long = segmentDao.insert(
+        SegmentEntity(
+            sessionId = sessionId,
+            startMs = startMs,
+            endMs = endMs,
+            text = text,
+            tokens = TokenTimingCodec.encode(tokens)
         )
+    )
 
     /**
      * Recording finished. Stamp the duration and move the session

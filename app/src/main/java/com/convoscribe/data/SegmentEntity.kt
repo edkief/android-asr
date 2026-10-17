@@ -34,5 +34,12 @@ data class SegmentEntity(
     val startMs: Long,
     val endMs: Long,
     val text: String,
-    val speakerIndex: Int? = null
+    val speakerIndex: Int? = null,
+    /**
+     * The line's tokens with absolute times, encoded by
+     * [TokenTimingCodec]; `null` for lines recorded before schema v3
+     * or by a backend without timings. Lets diarization split a line
+     * at a speaker change.
+     */
+    val tokens: String? = null
 )
