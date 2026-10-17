@@ -1,5 +1,24 @@
 # Source me: `. scripts/env.sh` or `source scripts/env.sh`. Do NOT run me.
 # This file must not use `set -e` because we are sourced and may be appended to.
+#
+# Per-machine override: if scripts/env.<hostname>.sh exists (hostname as
+# printed by `uname -n`), it is sourced INSTEAD of the rest of this file.
+# A host file may itself `source` this env.sh to reuse the defaults and then
+# override a few variables; the guard below stops that from looping.
+
+if [[ -z "${_CONVOSCRIBE_ENV_HOST_LOADING:-}" ]]; then
+  # Directory of this file when sourced: BASH_SOURCE in bash, %x in zsh.
+  _convoscribe_env_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-${(%):-%x}}")" && pwd)"
+  _convoscribe_host_env="$_convoscribe_env_dir/env.$(uname -n).sh"
+  unset _convoscribe_env_dir
+  if [[ -f "$_convoscribe_host_env" ]]; then
+    export _CONVOSCRIBE_ENV_HOST_LOADING=1
+    source "$_convoscribe_host_env"
+    unset _CONVOSCRIBE_ENV_HOST_LOADING _convoscribe_host_env
+    return 0
+  fi
+  unset _convoscribe_host_env
+fi
 
 export JAVA_HOME="$HOME/.local/share/convoscribe-toolchain/jdk-17"
 export ANDROID_HOME="$HOME/Android/Sdk"
