@@ -68,6 +68,7 @@ class NpuProbeDiagnosticsTest {
             diagnostics = "probePid: 1\nexit: unknown"
         )
         val report = formatReport(info, listOf(result))
-        assertTrue(report, report.contains("verdict: FAILED\nerror: boom\ndiagnostics:\n  probePid: 1\n  exit: unknown\n"))
+        val expected = "verdict: FAILED\nerror: boom\ndiagnostics:\n  probePid: 1\n  exit: unknown\n"
+        assertTrue(report, report.contains(expected))
     }
 }

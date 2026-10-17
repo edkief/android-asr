@@ -153,8 +153,7 @@ class AppContainer(val context: Context) {
      * buttons must test their own engine; skips the
      * [npuAvailability] guard so the NPU can be re-checked.
      */
-    fun transcriberFactoryFor(engine: String): TranscriberFactory =
-        sherpaTranscriberFactory.withEngine(engine)
+    fun transcriberFactoryFor(engine: String): TranscriberFactory = sherpaTranscriberFactory.withEngine(engine)
 
     /**
      * Drives a recording session: opens the mic, writes the WAV,
