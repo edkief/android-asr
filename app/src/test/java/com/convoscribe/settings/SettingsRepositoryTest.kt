@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -43,7 +44,9 @@ class SettingsRepositoryTest {
         assertEquals("", s.llmModel)
         assertEquals(24000, s.maxTranscriptChars)
         assertEquals("en", s.asrLanguage)
-        assertEquals("npu", s.asrEngine)
+        // CPU until the engine check has verified the NPU on the device.
+        assertEquals("cpu", s.asrEngine)
+        assertFalse(s.asrEngineChosen)
         assertEquals(4, s.numThreads)
         assertEquals(-1, s.numSpeakers)
         assertEquals(0.5f, s.clusterThreshold, 0.0001f)
@@ -122,17 +125,17 @@ class SettingsRepositoryTest {
     @Test
     fun update_unsupportedAsrEngineKeepsPreviousValue() {
         val repo = newRepository()
-        // Default is "npu". Try to set an unsupported engine.
+        // Default is "cpu". Try to set an unsupported engine.
         repo.update { it.copy(asrEngine = "gpu") }
+        assertEquals("cpu", repo.settings.value.asrEngine)
+
+        // Switch to "npu" so we have a different known previous value.
+        repo.update { it.copy(asrEngine = "npu") }
         assertEquals("npu", repo.settings.value.asrEngine)
 
-        // Switch to "cpu" so we have a known previous value.
-        repo.update { it.copy(asrEngine = "cpu") }
-        assertEquals("cpu", repo.settings.value.asrEngine)
-
-        // Now try to set "gpu" again — must keep "cpu".
+        // Now try to set "gpu" again — must keep "npu".
         repo.update { it.copy(asrEngine = "gpu") }
-        assertEquals("cpu", repo.settings.value.asrEngine)
+        assertEquals("npu", repo.settings.value.asrEngine)
     }
 
     @Test
@@ -226,5 +229,40 @@ class SettingsRepositoryTest {
         // collector; no Turbine needed here.
         repo.update { it.copy(numThreads = 7) }
         assertEquals(7, repo.settings.value.numThreads)
+    }
+
+    @Test
+    fun engine_followsDeviceDefaultUntilChosen_evenAcrossOtherSaves() {
+        var npuVerified = false
+        val repo = SettingsRepository(prefs, secrets) { if (npuVerified) "npu" else "cpu" }
+        repo.update { it.copy(llmModel = "m") } // an unrelated save
+        assertEquals("cpu", repo.settings.value.asrEngine)
+        assertFalse(prefs.contains(SettingsRepository.KEY_ASR_ENGINE))
+
+        // The engine check verifies the NPU: a user who never chose follows it.
+        npuVerified = true
+        repo.refreshDefaults()
+        assertEquals("npu", repo.settings.value.asrEngine)
+        assertEquals("npu", SettingsRepository(prefs, secrets) { "npu" }.settings.value.asrEngine)
+    }
+
+    @Test
+    fun engine_explicitChoiceIsKeptOverDeviceDefault() {
+        val repo = SettingsRepository(prefs, secrets) { "npu" }
+        repo.update { it.copy(asrEngine = "cpu") }
+        assertTrue(repo.settings.value.asrEngineChosen)
+
+        repo.refreshDefaults()
+        assertEquals("cpu", repo.settings.value.asrEngine)
+        assertEquals("cpu", SettingsRepository(prefs, secrets) { "npu" }.settings.value.asrEngine)
+    }
+
+    @Test
+    fun engine_legacyStoredEngineWithoutChosenFlagCountsAsChosen() {
+        // Written by builds from before the chosen flag existed.
+        prefs.edit().putString(SettingsRepository.KEY_ASR_ENGINE, "npu").commit()
+        val repo = SettingsRepository(prefs, secrets) { "cpu" }
+        assertEquals("npu", repo.settings.value.asrEngine)
+        assertTrue(repo.settings.value.asrEngineChosen)
     }
 }

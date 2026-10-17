@@ -318,21 +318,19 @@ class SettingsViewModelTest {
         // Pre-install both English and French so the French
         // bundle is removable without affecting the user's
         // chosen language (English). The default engine is
-        // "npu", so the English bundle that satisfies the
-        // `selectedLanguageModelInstalled` check is
-        // [ModelCatalog.ASR_EN_NPU], not the CPU-only
-        // [ModelCatalog.ASR_EN].
+        // "cpu" (no verified NPU), so the English bundle that
+        // satisfies the `selectedLanguageModelInstalled` check is
+        // the CPU [ModelCatalog.ASR_EN].
         for (bundle in listOf(
-            com.convoscribe.models.ModelCatalog.ASR_EN_NPU,
+            com.convoscribe.models.ModelCatalog.ASR_EN,
             com.convoscribe.models.ModelCatalog.ASR_FR
         )) {
             for (file in bundle.files) {
                 val onDisk = modelStore.fileFor(bundle, file.fileName)
                 onDisk.parentFile?.mkdirs()
-                // The NPU bundle's `encoder.so` is 591 MB; a full
-                // ByteArray would OOM the test JVM. A sparse file
-                // via RandomAccessFile.setLength records the
-                // expected size on disk without allocating it.
+                // A sparse file via RandomAccessFile.setLength
+                // records the expected size on disk without
+                // allocating the model bytes.
                 java.io.RandomAccessFile(onDisk, "rw").use { it.setLength(file.sizeBytes) }
             }
         }
@@ -345,9 +343,9 @@ class SettingsViewModelTest {
         vm.deleteFrenchModel()
         advanceUntilIdle()
 
-        // English (the NPU bundle, since the default engine is
-        // "npu") is untouched, French is gone.
-        assertTrue(modelStore.isInstalled(com.convoscribe.models.ModelCatalog.ASR_EN_NPU))
+        // English (the CPU bundle, the default engine) is
+        // untouched, French is gone.
+        assertTrue(modelStore.isInstalled(com.convoscribe.models.ModelCatalog.ASR_EN))
         assertFalse(modelStore.isInstalled(com.convoscribe.models.ModelCatalog.ASR_FR))
         assertEquals("en", vm.state.value.asrLanguage)
         assertTrue(vm.state.value.selectedLanguageModelInstalled)

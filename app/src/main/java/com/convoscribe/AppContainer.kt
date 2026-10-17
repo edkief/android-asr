@@ -60,6 +60,18 @@ class AppContainer(val context: Context) {
     val modelDownloader = ModelDownloader(httpClient, modelStore)
 
     /**
+     * What the NPU probe has seen on this device: a verified NPU, or
+     * the QNN runtime killing its process. Written by the engine check's NPU
+     * probe, read by [transcriberFactory] so a recording with the
+     * NPU selected fails with a message instead of closing the app,
+     * and by [settingsRepository] to pick the default engine. Built
+     * first because the settings read it on construction.
+     */
+    val npuAvailability = NpuAvailability(
+        context.getSharedPreferences(NpuAvailability.PREFS_NAME, Context.MODE_PRIVATE)
+    )
+
+    /**
      * Persists [com.convoscribe.settings.AppSettings] in
      * `settings` SharedPreferences and the LLM API key in an
      * encrypted file. Read by ASR (language, thread count),
@@ -68,7 +80,10 @@ class AppContainer(val context: Context) {
      */
     val settingsRepository = SettingsRepository(
         prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE),
-        secrets = EncryptedSecretStore(context)
+        secrets = EncryptedSecretStore(context),
+        // CPU everywhere until the engine check has seen the NPU work
+        // on this device (the Boox Note Air 6C has no usable NPU).
+        defaultEngine = { if (npuAvailability.isVerified()) "npu" else "cpu" }
     )
 
     /**
@@ -116,16 +131,6 @@ class AppContainer(val context: Context) {
      * today; the fun interface keeps the recording screen engine-
      * agnostic.
      */
-    /**
-     * Whether the NPU probe has seen the QNN runtime kill its
-     * process on this device. Written by the engine check's NPU
-     * probe, read by [transcriberFactory] so a recording with the
-     * NPU selected fails with a message instead of closing the app.
-     */
-    val npuAvailability = NpuAvailability(
-        context.getSharedPreferences(NpuAvailability.PREFS_NAME, Context.MODE_PRIVATE)
-    )
-
     private val sherpaTranscriberFactory = SherpaTranscriberFactory(
         store = modelStore,
         settings = settingsRepository,

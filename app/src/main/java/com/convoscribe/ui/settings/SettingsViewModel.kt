@@ -225,7 +225,7 @@ class SettingsViewModel(
         }
         if (_state.value.asrEngine != current.asrEngine) {
             repo.update { previous ->
-                previous.copy(asrEngine = _state.value.asrEngine)
+                previous.copy(asrEngine = _state.value.asrEngine, asrEngineChosen = true)
             }
         }
         repo.setApiKey(form.apiKey)
@@ -261,7 +261,7 @@ class SettingsViewModel(
             current = repo.settings.value.copy(asrEngine = engine),
             base = _state.value.copy(asrEngine = engine)
         )
-        repo.update { previous -> previous.copy(asrEngine = engine) }
+        repo.update { previous -> previous.copy(asrEngine = engine, asrEngineChosen = true) }
     }
 
     /**

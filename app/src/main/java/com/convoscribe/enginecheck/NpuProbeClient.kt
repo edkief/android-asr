@@ -55,11 +55,14 @@ object NpuProbeProtocol {
  *    denials), which an app can read for its own UID.
  *
  * A dead probe is recorded in [availability] so the recording path
- * refuses the NPU instead of crashing the app; a clean run clears it.
+ * refuses the NPU instead of crashing the app; a clean run clears it,
+ * marks the NPU verified and calls [onVerified] (which lets the
+ * default engine move to the NPU for users who never picked one).
  */
 class NpuProbeClient(
     private val context: Context,
-    private val availability: NpuAvailability
+    private val availability: NpuAvailability,
+    private val onVerified: () -> Unit = {}
 ) {
 
     private sealed interface Outcome {
@@ -75,7 +78,10 @@ class NpuProbeClient(
     suspend fun run(sampleFile: File): EngineCheckResult {
         return when (val outcome = withContext(Dispatchers.Main) { runInProbe(sampleFile) }) {
             is Outcome.Completed -> {
-                if (outcome.result.error == null) availability.markWorking()
+                if (outcome.result.error == null) {
+                    availability.markVerified()
+                    onVerified()
+                }
                 outcome.result
             }
             is Outcome.Died -> {

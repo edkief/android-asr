@@ -86,7 +86,8 @@ fun EngineCheckScreen(navController: androidx.navigation.NavHostController) {
                     },
                     npuProbe = NpuProbeClient(
                         context = context.applicationContext,
-                        availability = container.npuAvailability
+                        availability = container.npuAvailability,
+                        onVerified = container.settingsRepository::refreshDefaults
                     ).let { client -> NpuProbe { sampleFile -> client.run(sampleFile) } }
                 )
             }
