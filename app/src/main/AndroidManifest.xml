@@ -74,6 +74,18 @@
             android:name=".service.RecordingService"
             android:exported="false"
             android:foregroundServiceType="microphone|dataSync" />
+        <!--
+            NPU probe for the engine check. Runs in its own process
+            because sherpa-onnx's QNN backend calls exit() when it
+            cannot create the HTP device (e.g. the Boox Note Air 6C,
+            whose SoC has the NSP fused off); in-process that closes the
+            whole app. Here only `:npuprobe` dies and the engine check
+            reports why. Bound-only, never exported.
+        -->
+        <service
+            android:name=".service.NpuProbeService"
+            android:exported="false"
+            android:process=":npuprobe" />
     </application>
 
 </manifest>

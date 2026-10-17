@@ -15,6 +15,7 @@ import com.convoscribe.diarization.SpeakerEmbedderFactory
 import com.convoscribe.engine.sherpa.SherpaDiarizerFactory
 import com.convoscribe.engine.sherpa.SherpaSpeakerEmbedderFactory
 import com.convoscribe.engine.sherpa.SherpaTranscriberFactory
+import com.convoscribe.enginecheck.NpuAvailability
 import com.convoscribe.llm.ChatClient
 import com.convoscribe.llm.LlmConfig
 import com.convoscribe.llm.OpenAiChatClient
@@ -115,7 +116,17 @@ class AppContainer(val context: Context) {
      * today; the fun interface keeps the recording screen engine-
      * agnostic.
      */
-    val transcriberFactory: TranscriberFactory = SherpaTranscriberFactory(
+    /**
+     * Whether the NPU probe has seen the QNN runtime kill its
+     * process on this device. Written by the engine check's NPU
+     * probe, read by [transcriberFactory] so a recording with the
+     * NPU selected fails with a message instead of closing the app.
+     */
+    val npuAvailability = NpuAvailability(
+        context.getSharedPreferences(NpuAvailability.PREFS_NAME, Context.MODE_PRIVATE)
+    )
+
+    private val sherpaTranscriberFactory = SherpaTranscriberFactory(
         store = modelStore,
         settings = settingsRepository,
         // `nativeLibraryDir` is the absolute path the Android
@@ -130,8 +141,20 @@ class AppContainer(val context: Context) {
         // case we hand the factory a sentinel empty string. The
         // CPU recognizer is what every test fixture instantiates, so
         // the value is never used and the failure is benign.
-        nativeLibraryDir = context.applicationInfo.nativeLibraryDir ?: ""
+        nativeLibraryDir = context.applicationInfo.nativeLibraryDir ?: "",
+        npuBlockedReason = npuAvailability::blockedReason
     )
+
+    val transcriberFactory: TranscriberFactory = sherpaTranscriberFactory
+
+    /**
+     * [transcriberFactory] pinned to [engine] (`"npu"` or `"cpu"`)
+     * whatever Settings say. Used by the engine check, whose two
+     * buttons must test their own engine; skips the
+     * [npuAvailability] guard so the NPU can be re-checked.
+     */
+    fun transcriberFactoryFor(engine: String): TranscriberFactory =
+        sherpaTranscriberFactory.withEngine(engine)
 
     /**
      * Drives a recording session: opens the mic, writes the WAV,

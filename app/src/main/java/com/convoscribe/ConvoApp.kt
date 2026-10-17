@@ -11,6 +11,11 @@ class ConvoApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        // Secondary processes (the `:npuprobe` engine-check probe)
+        // only need the container's factories. Crash recovery must
+        // not run there: it would see an idle controller and patch
+        // the session the main process may be recording right now.
+        if (Application.getProcessName()?.contains(':') == true) return
         // Crash-recovery: walk the database for sessions that were
         // left mid-recording / mid-diarization by a previous
         // process and patch them so the user can see them in the

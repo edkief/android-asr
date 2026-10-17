@@ -43,8 +43,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.convoscribe.ConvoApp
 import com.convoscribe.R
-import com.convoscribe.asr.TranscriberFactory
 import com.convoscribe.enginecheck.EngineCheckResult
+import com.convoscribe.enginecheck.NpuProbeClient
 import com.convoscribe.enginecheck.verdict
 
 /**
@@ -71,20 +71,23 @@ import com.convoscribe.enginecheck.verdict
 fun EngineCheckScreen(navController: androidx.navigation.NavHostController) {
     val context = LocalContext.current
     val container = (context.applicationContext as ConvoApp).container
-    val factory: TranscriberFactory = container.transcriberFactory
     val vm: EngineCheckViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
                 EngineCheckViewModel(
                     context = context.applicationContext,
                     recordingController = container.recordingController,
-                    runnerFactory = EngineCheckRunnerFactory { sampleFile, clock ->
+                    runnerFactory = EngineCheckRunnerFactory { engine, sampleFile, clock ->
                         com.convoscribe.enginecheck.EngineCheckRunner(
-                            factory = factory,
+                            factory = container.transcriberFactoryFor(engine),
                             loadSamples = { readEngineCheckSamples(sampleFile) },
                             clock = clock
                         )
-                    }
+                    },
+                    npuProbe = NpuProbeClient(
+                        context = context.applicationContext,
+                        availability = container.npuAvailability
+                    ).let { client -> NpuProbe { sampleFile -> client.run(sampleFile) } }
                 )
             }
         }
@@ -327,6 +330,12 @@ private fun ResultCard(result: EngineCheckResult) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error
                 )
+                if (result.diagnostics != null) {
+                    Text(
+                        text = stringResource(R.string.enginecheck_result_diagnostics_hint),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             } else if (result.text.isNotBlank()) {
                 Text(
                     text = stringResource(R.string.enginecheck_result_text, result.text),

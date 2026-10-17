@@ -53,14 +53,25 @@ data class EngineCheckUiState(
 )
 
 /**
- * Function the ViewModel calls to build a runner. Kept as an
- * interface so the screen tests can swap a synchronous runner
- * without instantiating a real [TranscriberFactory] and writing
- * real WAV files. The default implementation in production wires
- * the [com.convoscribe.asr.TranscriberFactory] from the container.
+ * Function the ViewModel calls to build an in-process runner for
+ * [engine]. Kept as an interface so the screen tests can swap a
+ * synchronous runner without instantiating a real
+ * [com.convoscribe.asr.TranscriberFactory] and writing real WAV
+ * files. The production implementation pins the container's
+ * factory to [engine], so "Check CPU" tests the CPU even when
+ * Settings select the NPU.
  */
 fun interface EngineCheckRunnerFactory {
-    fun create(sampleFile: File, clock: () -> Long): EngineCheckRunner
+    fun create(engine: String, sampleFile: File, clock: () -> Long): EngineCheckRunner
+}
+
+/**
+ * Runs the NPU check out of process. Production wires
+ * [com.convoscribe.enginecheck.NpuProbeClient]: the QNN runtime
+ * calls `exit()` on some devices, which must not close the app.
+ */
+fun interface NpuProbe {
+    suspend fun run(sampleFile: File): EngineCheckResult
 }
 
 /**
@@ -76,7 +87,8 @@ fun interface EngineCheckRunnerFactory {
 class EngineCheckViewModel(
     private val context: Context,
     private val recordingController: RecordingController,
-    private val runnerFactory: EngineCheckRunnerFactory
+    private val runnerFactory: EngineCheckRunnerFactory,
+    private val npuProbe: NpuProbe
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(EngineCheckUiState())
@@ -153,10 +165,27 @@ class EngineCheckViewModel(
             missingEngine = null
         )
         viewModelScope.launch {
-            val result = withContext(Dispatchers.Default) {
-                val sampleFile = File(File(context.filesDir, "models/${bundle.id}"), "test_wavs/0.wav")
-                val runner = runnerFactory.create(sampleFile, clock = { System.nanoTime() / 1_000_000L })
-                runner.run(engine)
+            val sampleFile = File(File(context.filesDir, "models/${bundle.id}"), "test_wavs/0.wav")
+            val result = if (engine == "npu") {
+                try {
+                    npuProbe.run(sampleFile)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    EngineCheckResult(
+                        engine = engine,
+                        initMs = 0L,
+                        firstRun = false,
+                        audioMs = 0L,
+                        processMs = 0L,
+                        text = "",
+                        error = e.message ?: e.toString()
+                    )
+                }
+            } else {
+                withContext(Dispatchers.Default) {
+                    val runner = runnerFactory.create(engine, sampleFile, clock = { System.nanoTime() / 1_000_000L })
+                    runner.run(engine)
+                }
             }
             val next = _state.value.results.toMutableMap()
             next[engine] = result

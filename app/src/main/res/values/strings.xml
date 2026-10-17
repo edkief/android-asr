@@ -95,6 +95,7 @@
     <string name="enginecheck_result_rtf">RTF</string>
     <string name="enginecheck_result_text">Text: %1$s</string>
     <string name="enginecheck_result_error">Error: %1$s</string>
+    <string name="enginecheck_result_diagnostics_hint">The app kept running. Copy or share the report for the full diagnostics.</string>
     <string name="enginecheck_copy_report">Copy report</string>
     <string name="enginecheck_share_report">Share report</string>
     <string name="session_back">Back</string>
