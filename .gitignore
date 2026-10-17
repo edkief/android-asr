@@ -13,3 +13,5 @@ app/libs/*.aar
 app/src/main/jniLibs/
 captures/
 dist/
+# Python bytecode (scripts/eval)
+__pycache__/
