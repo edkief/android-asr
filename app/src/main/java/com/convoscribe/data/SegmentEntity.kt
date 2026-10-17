@@ -43,3 +43,16 @@ data class SegmentEntity(
      */
     val tokens: String? = null
 )
+
+/**
+ * One part of a transcript line that diarization split at a speaker
+ * change; it replaces the original row (see
+ * [SessionRepository.applyDiarization]).
+ */
+data class SegmentPiece(
+    val startMs: Long,
+    val endMs: Long,
+    val text: String,
+    val tokens: List<com.convoscribe.asr.TimedToken>,
+    val speakerIndex: Int?
+)

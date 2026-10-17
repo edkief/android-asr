@@ -284,6 +284,11 @@ class SessionRepository(
      * ignored — the diarizer is the authority on the set of
      * speakers, the label map just renames some of them.
      *
+     * [replacements] maps a segment id to the pieces it was split
+     * into at speaker changes; that row is deleted and the pieces are
+     * inserted with their own speaker. Segments not in it keep their
+     * row and take their index from [assignments].
+     *
      * Everything happens in one transaction so a crash mid-write
      * does not leave the session half-diarized: either every
      * segment has the new index and the speakers table is replaced,
@@ -293,11 +298,27 @@ class SessionRepository(
         sessionId: Long,
         assignments: Map<Long, Int?>,
         speakerCount: Int,
-        labels: Map<Int, String> = emptyMap()
+        labels: Map<Int, String> = emptyMap(),
+        replacements: Map<Long, List<SegmentPiece>> = emptyMap()
     ) {
         db.withTransaction {
             assignments.forEach { (segmentId, speakerIndex) ->
                 segmentDao.setSpeaker(segmentId, speakerIndex)
+            }
+            replacements.forEach { (segmentId, pieces) ->
+                segmentDao.delete(segmentId)
+                for (piece in pieces) {
+                    segmentDao.insert(
+                        SegmentEntity(
+                            sessionId = sessionId,
+                            startMs = piece.startMs,
+                            endMs = piece.endMs,
+                            text = piece.text,
+                            speakerIndex = piece.speakerIndex,
+                            tokens = TokenTimingCodec.encode(piece.tokens)
+                        )
+                    )
+                }
             }
             speakerDao.deleteForSession(sessionId)
             val rows = (0 until speakerCount).map { i ->

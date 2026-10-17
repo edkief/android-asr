@@ -4,8 +4,10 @@ import android.util.Log
 import com.convoscribe.TAG
 import com.convoscribe.audio.WavReader
 import com.convoscribe.data.EnrolledSpeakerStore
+import com.convoscribe.data.SegmentPiece
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.data.SessionStatus
+import com.convoscribe.data.TokenTimingCodec
 import com.convoscribe.settings.SettingsRepository
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -144,37 +146,71 @@ class DiarizeSessionUseCase(
                     )
                 }
             }
-            val spans = segments.map { segment ->
-                SegmentSpan(id = segment.id, startMs = segment.startMs, endMs = segment.endMs)
+            // Split lines at speaker changes (where token times exist),
+            // then number speakers by first appearance.
+            val split = segments.map { segment ->
+                segment to SegmentSplitter.split(
+                    SplittableSegment(
+                        id = segment.id,
+                        startMs = segment.startMs,
+                        endMs = segment.endMs,
+                        text = segment.text,
+                        tokens = TokenTimingCodec.decode(segment.tokens)
+                    ),
+                    turns
+                )
             }
-            val assignment = SpeakerAssigner.assign(spans, turns)
+            val rawToIndex = SpeakerAssigner.renumber(
+                split.flatMap { (_, pieces) -> pieces }.sortedBy { it.startMs }.map { it.rawSpeaker }
+            )
+            val speakerCount = rawToIndex.size
+            val assignments = mutableMapOf<Long, Int?>()
+            val replacements = mutableMapOf<Long, List<SegmentPiece>>()
+            for ((segment, pieces) in split) {
+                if (pieces.size == 1) {
+                    assignments[segment.id] = pieces.single().rawSpeaker?.let { rawToIndex[it] }
+                } else {
+                    replacements[segment.id] = pieces.map { piece ->
+                        SegmentPiece(
+                            startMs = piece.startMs,
+                            endMs = piece.endMs,
+                            text = piece.text,
+                            tokens = piece.tokens,
+                            speakerIndex = piece.rawSpeaker?.let { rawToIndex[it] }
+                        )
+                    }
+                }
+            }
             val enrolledLabels = computeLabels(
                 sessionId = sessionId,
                 samples = samples,
                 turns = turns,
-                rawToIndex = assignment.rawToIndex,
-                speakerCount = assignment.speakerCount,
+                rawToIndex = rawToIndex,
+                speakerCount = speakerCount,
                 settings = speakerSettings
             )
             // Names typed on an earlier diarization survive the re-run;
             // a match against an enrolled voice still wins.
             val carriedLabels = SpeakerLabelCarryOver.carry(
-                previousSegments = segments,
+                previous = segments.map { LabelledSpan(it.startMs, it.endMs, it.speakerIndex) },
                 previousLabels = repository.getSpeakers(sessionId).associate { it.speakerIndex to it.label },
-                newAssignment = assignment.speakerBySegment
+                current = split.flatMap { (_, pieces) ->
+                    pieces.map { LabelledSpan(it.startMs, it.endMs, it.rawSpeaker?.let { raw -> rawToIndex[raw] }) }
+                }
             )
             val labels = carriedLabels + enrolledLabels
             repository.applyDiarization(
                 sessionId = sessionId,
-                assignments = assignment.speakerBySegment,
-                speakerCount = assignment.speakerCount,
-                labels = labels
+                assignments = assignments,
+                speakerCount = speakerCount,
+                labels = labels,
+                replacements = replacements
             )
             val durationMs = (System.nanoTime() - startedNanos) / 1_000_000L
             Log.i(
                 TAG,
                 "diarization completed session=$sessionId durationMs=$durationMs" +
-                    " speakers=${assignment.speakerCount}"
+                    " speakers=$speakerCount splitLines=${replacements.size}"
             )
         } catch (ce: CancellationException) {
             // Cooperative cancellation: re-throw so structured
