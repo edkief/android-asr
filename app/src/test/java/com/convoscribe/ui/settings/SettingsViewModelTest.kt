@@ -188,6 +188,15 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun testConnection_messagelessFailureShowsExceptionName() = runTest(dispatcher) {
+        val fake = FakeChatClient(error = IllegalStateException())
+        val vm = newVm(repo = newRepo(), chatClient = fake)
+        vm.testConnection()
+        advanceUntilIdle()
+        assertEquals("Failed: IllegalStateException", vm.state.value.testResult)
+    }
+
+    @Test
     fun testConnection_stripsTrailingSlashWhenSavingBeforeTest() = runTest(dispatcher) {
         val fake = FakeChatClient(models = listOf("m"))
         val repo = newRepo()

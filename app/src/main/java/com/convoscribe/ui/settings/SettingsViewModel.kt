@@ -1,9 +1,11 @@
 package com.convoscribe.ui.settings
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.convoscribe.TAG
 import com.convoscribe.llm.ChatClient
-import com.convoscribe.llm.LlmException
+import com.convoscribe.llm.toUserMessage
 import com.convoscribe.models.ModelCatalog
 import com.convoscribe.models.ModelStore
 import com.convoscribe.settings.AppSettings
@@ -321,7 +323,7 @@ class SettingsViewModel(
      * Persist the current form, then call [ChatClient.listModels].
      * Records the outcome as `"Connected – N models: a, b, c"`
      * (first five ids, comma-separated) or `"Failed: <message>"`
-     * (the [LlmException] message verbatim) on the [SettingsUiState.testResult]
+     * (see [com.convoscribe.llm.toUserMessage]) on the [SettingsUiState.testResult]
      * field. `availableModels` is populated only on success.
      *
      * The `saved` flag is not affected — connection-test is a
@@ -341,15 +343,8 @@ class SettingsViewModel(
                         "Connected – ${models.size} models: $first"
                     },
                     onFailure = { failure ->
-                        val message = when (failure) {
-                            is LlmException ->
-                                failure.message
-                                    ?: "HTTP ${failure.httpCode ?: "?"}"
-                            else ->
-                                failure.message
-                                    ?: failure.javaClass.simpleName
-                        }
-                        "Failed: $message"
+                        Log.w(TAG, "settings: LLM connection test failed", failure)
+                        "Failed: ${failure.toUserMessage()}"
                     }
                 ),
                 availableModels = result.getOrDefault(emptyList())

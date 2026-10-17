@@ -1,14 +1,16 @@
 package com.convoscribe.ui.session
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.convoscribe.TAG
 import com.convoscribe.data.MessageKind
 import com.convoscribe.data.MessageRole
 import com.convoscribe.data.SessionRepository
 import com.convoscribe.data.TranscriptFormatter
 import com.convoscribe.llm.ChatClient
-import com.convoscribe.llm.LlmException
 import com.convoscribe.llm.PromptBuilder
+import com.convoscribe.llm.toUserMessage
 import com.convoscribe.settings.SettingsRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,8 +67,10 @@ data class SummaryUiState(
  *  - On completion the SUMMARY kind is wiped, the full text is
  *    saved as a fresh ASSISTANT row, and `streaming` / `running`
  *    are reset.
- *  - An [LlmException] (transport or HTTP failure) sets `error`
- *    to the message verbatim and keeps the old `saved` value.
+ *  - Any failure (an LLM transport or HTTP error, or anything
+ *    unexpected) sets `error` to
+ *    [com.convoscribe.llm.toUserMessage], logs the stack trace
+ *    and keeps the old `saved` value.
  *  - [cancel] stops the in-flight `summarise` job; a subsequent
  *    `summarise` call starts a fresh run.
  *
@@ -94,7 +98,7 @@ class SummaryViewModel(
      * In-flight summarise job. Tracked so [cancel] can interrupt
      * the streaming flow mid-answer; `null` when nothing is
      * running. The streaming flow's `catch` block does the same
-     * bookkeeping on a thrown [LlmException], so the field is
+     * bookkeeping on a failure, so the field is
      * always in sync with the UI.
      */
     private var job: Job? = null
@@ -170,17 +174,16 @@ class SummaryViewModel(
                         // Cancellation is handled by the surrounding
                         // coroutine machinery — it does not flip
                         // `error` because the user explicitly asked
-                        // to stop. LlmException is the only path
-                        // the UI surfaces as a red message.
-                        if (failure is LlmException) {
-                            _state.value = _state.value.copy(
-                                running = false,
-                                streaming = "",
-                                error = failure.message
-                            )
-                        } else {
-                            throw failure
-                        }
+                        // to stop. Any other failure is shown, never
+                        // rethrown: an exception escaping
+                        // viewModelScope crashes the app.
+                        if (failure is kotlinx.coroutines.CancellationException) throw failure
+                        Log.w(TAG, "summary: LLM request failed", failure)
+                        _state.value = _state.value.copy(
+                            running = false,
+                            streaming = "",
+                            error = failure.toUserMessage()
+                        )
                     }
                     .collect()
 
