@@ -86,13 +86,7 @@ class SherpaDiarizer(
         // The callback must return 0 to continue (any other value
         // asks sherpa-onnx to abort the run); we always return 0
         // and only forward a normalised 0f..1f progress fraction.
-        val raw = sd.processWithCallback(
-            samples,
-            callback = { done, total, _ ->
-                onProgress(if (total <= 0) 0f else done.toFloat() / total)
-                0
-            }
-        )
+        val raw = sd.processWithCallback(samples, callback = ProgressCallback(onProgress))
         return raw.map { seg ->
             SpeakerTurn(
                 startMs = (seg.start * 1000f).toLong(),
@@ -104,5 +98,23 @@ class SherpaDiarizer(
 
     override fun close() {
         sd.release()
+    }
+
+    /**
+     * The sherpa-onnx JNI resolves the callback with
+     * `GetMethodID(cls, "invoke", "(IIJ)Ljava/lang/Integer;")`.
+     * A plain Kotlin lambda is compiled via invokedynamic (Kotlin 2.x
+     * default) into a synthetic class exposing only the erased
+     * `invoke(Object, Object, Object)`, so the lookup fails and ART
+     * aborts the process. A named class gets the specialised
+     * `invoke(int, int, long): Integer` the native side expects.
+     */
+    private class ProgressCallback(
+        private val onProgress: (Float) -> Unit
+    ) : (Int, Int, Long) -> Int {
+        override fun invoke(done: Int, total: Int, arg: Long): Int {
+            onProgress(if (total <= 0) 0f else done.toFloat() / total)
+            return 0
+        }
     }
 }
