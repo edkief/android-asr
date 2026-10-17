@@ -7,7 +7,7 @@ import java.nio.ByteOrder
 
 /**
  * Minimal WAV reader for the recordings produced by [WavWriter]
- * (and any other well-formed 16 kHz / 16-bit / mono PCM WAV). It
+ * (and any other well-formed 16-bit mono PCM WAV). It
  * validates the `fmt ` chunk, locates the `data` chunk by walking
  * RIFF sub-chunks (so it works even if a future tool inserts an
  * extra `LIST`/`JUNK` chunk), and returns the samples scaled to
@@ -17,16 +17,21 @@ import java.nio.ByteOrder
  * crash-recovered file that was never finalized) or lies about the
  * payload length, the reader falls back to the bytes that remain on
  * disk and trusts the file length, matching [WavWriter.repairHeader].
+ *
+ * Files at another sample rate (model sample clips: the Kroko one
+ * is 24 kHz) are resampled to 16 kHz with linear interpolation,
+ * which is plenty for an engine-check clip. The app's own
+ * recordings are 16 kHz and are returned as-is.
  */
 object WavReader {
 
     /**
-     * Read [file] as a mono 16 kHz 16-bit PCM WAV and return the
-     * samples as a `FloatArray` in `[-1.0, 1.0]`.
+     * Read [file] as a mono 16-bit PCM WAV and return its samples at
+     * 16 kHz as a `FloatArray` in `[-1.0, 1.0]`, resampling if the
+     * file uses another rate.
      *
      * @throws IllegalArgumentException if the file is not a WAV, the
-     *   `fmt ` chunk is missing, or any field deviates from 16 kHz
-     *   mono 16-bit PCM.
+     *   `fmt ` chunk is missing, or it is not mono 16-bit PCM.
      */
     fun readMono16k(file: File): FloatArray {
         RandomAccessFile(file, "r").use { raf ->
@@ -49,6 +54,7 @@ object WavReader {
             // `LIST`/`JUNK` chunk still works.
             var offset = 12L
             var fmtFound = false
+            var sampleRate = AudioSpec.SAMPLE_RATE
             var dataOffset = -1L
             var dataSize = 0L
 
@@ -71,7 +77,7 @@ object WavReader {
                     val bb = ByteBuffer.wrap(fmt).order(ByteOrder.LITTLE_ENDIAN)
                     val format = bb.short.toInt() and 0xFFFF
                     val channels = bb.short.toInt() and 0xFFFF
-                    val sampleRate = bb.int
+                    sampleRate = bb.int
                     bb.int // byte rate
                     bb.short // block align
                     val bitsPerSample = bb.short.toInt() and 0xFFFF
@@ -81,8 +87,8 @@ object WavReader {
                     require(channels == 1) {
                         "Only mono WAV is supported, got $channels channel(s): ${file.absolutePath}"
                     }
-                    require(sampleRate == AudioSpec.SAMPLE_RATE) {
-                        "Only ${AudioSpec.SAMPLE_RATE} Hz WAV is supported, got $sampleRate: ${file.absolutePath}"
+                    require(sampleRate > 0) {
+                        "Invalid sample rate $sampleRate: ${file.absolutePath}"
                     }
                     require(bitsPerSample == 16) {
                         "Only 16-bit WAV is supported, got $bitsPerSample bits: ${file.absolutePath}"
@@ -129,8 +135,24 @@ object WavReader {
             for (i in 0 until nSamples) {
                 out[i] = bb.short / 32_768f
             }
-            return out
+            return if (sampleRate == AudioSpec.SAMPLE_RATE) out else resample(out, sampleRate, AudioSpec.SAMPLE_RATE)
         }
+    }
+
+    /** Linear-interpolation resampling of [input] from [fromRate] to [toRate]. */
+    internal fun resample(input: FloatArray, fromRate: Int, toRate: Int): FloatArray {
+        if (input.isEmpty() || fromRate == toRate) return input
+        val outSize = (input.size.toLong() * toRate / fromRate).toInt()
+        val out = FloatArray(outSize)
+        val step = fromRate.toDouble() / toRate
+        for (i in 0 until outSize) {
+            val pos = i * step
+            val left = pos.toInt().coerceAtMost(input.size - 1)
+            val right = (left + 1).coerceAtMost(input.size - 1)
+            val frac = (pos - left).toFloat()
+            out[i] = input[left] + (input[right] - input[left]) * frac
+        }
+        return out
     }
 
     private fun requireFourCC(buf: ByteArray, offset: Int, expected: String, file: File) {
